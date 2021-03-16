@@ -95,6 +95,7 @@ const pR = 1e-7
 #const pR = 1e-15
 const xC = 3.0
 const GIFINTERVAL = 30000
+#const GIFINTERVAL = 3000
 T = 6.0
 
 "Viscous parameters"
@@ -322,82 +323,6 @@ function rhs_ESDG(U,K,N,Mlump_inv,S)
     return rhsI .+ rhsV
 end
 
-function construct_artificial_wavespd(rhoL,mL,EL,rhoR,mR,ER,F1,F2,F3)
-    dij = abs(F1/(rhoL+rhoR))
-    rhosum = rhoL+rhoR
-    msum = mL+mR
-    Esum = EL+ER
-    a = rhosum*Esum-1/2*msum^2
-    b = rhosum*F3+Esum*F1-msum*F2
-    c = F1*F3-1/2*F2^2
-
-    if c >= 0 
-        return max(dij,0.0)
-    else
-        return max(dij,(b+sqrt(b^2-4*a*c))/(2*a))
-    end
-end
-
-function rhs_low_graph_visc(U,K,N,sigma,S0)
-    p = pfun_nd.(U[1],U[2],U[3])
-    flux = zero.(U)
-    @. flux[1] = U[2]
-    @. flux[2] = U[2]^2/U[1]+p
-    @. flux[3] = U[3]*U[2]/U[1]+p*U[2]/U[1]
-    graph_visc = [zeros(N+1,K) for i = 1:Nc]
-
-    wavespd_arr = zeros(N+1,K)
-    for k = 1:K
-        for i = 1:N+1
-            wavespd_arr[i,k] = wavespeed_1D(U[1][i,k],U[2][i,k],U[3][i,k])
-        end
-    end
-
-    # Graph viscosity
-    for k = 1:K
-        for j = 1:N+1
-            for i = 1:N+1
-                if i != j
-                    F1 = (sigma[1][i,k]+sigma[1][j,k])/2
-                    F2 = (sigma[2][i,k]+sigma[2][j,k])/2
-                    F3 = (sigma[3][i,k]+sigma[3][j,k])/2
-                    wavespd = construct_artificial_wavespd(U[1][i,k],U[2][i,k],U[3][i,k],U[1][j,k],U[2][j,k],U[3][j,k],F1,F2,F3)
-                    #wavespd = max(wavespd_arr[i,k],wavespd_arr[j,k])
-                    for c = 1:Nc
-                        #graph_visc[c][i,k] += wavespd*abs(S0[i,j])*(U[c][j,k]-U[c][i,k])
-                        graph_visc[c][i,k] += wavespd*(U[c][j,k]-U[c][i,k])
-                    end
-                end
-            end
-        end
-
-        # Surface term (numerical fluxes)
-        U_left     = (k == 1) ? [rhoL; 0.0; pL/(γ-1)]  : [U[1][end,k-1]; U[2][end,k-1]; U[3][end,k-1]]
-        U_right    = (k == K) ? [rhoR; 0.0; pR/(γ-1)]  : [U[1][1,k+1]; U[2][1,k+1]; U[3][1,k+1]]
-        sigma_left  = (k == 1) ? [sigma[1][1,k];sigma[2][1,k];sigma[3][1,k]] : [sigma[1][end,k-1]; sigma[2][end,k-1]; sigma[3][end,k-1]]
-        sigma_right = (k == K) ? [sigma[1][end,k];sigma[2][end,k];sigma[3][end,k]] : [sigma[1][1,k+1]; sigma[2][1,k+1]; sigma[3][1,k+1]] 
-        # wavespd_l = max(wavespd_arr[1,k],wavespeed_1D(U_left[1],U_left[2],U_left[3]))
-        # wavespd_r = max(wavespd_arr[end,k],wavespeed_1D(U_right[1],U_right[2],U_right[3]))
-        F1 = (sigma[1][1,k]+sigma_left[2])/2
-        F2 = (sigma[2][1,k]+sigma_left[2])/2
-        F3 = (sigma[3][1,k]+sigma_left[3])/2
-        wavespd_l = construct_artificial_wavespd(U_left[1],U_left[2],U_left[3],U[1][1,k],U[2][1,k],U[3][1,k],F1,F2,F3)
-        F1 = (sigma[1][end,k]+sigma_right[2])/2
-        F2 = (sigma[2][end,k]+sigma_right[2])/2
-        F3 = (sigma[3][end,k]+sigma_right[3])/2
-        wavespd_r = construct_artificial_wavespd(U_right[1],U_right[2],U_right[3],U[1][end,k],U[2][end,k],U[3][end,k],F1,F2,F3)
-
-        for c = 1:Nc
-            # graph_visc[c][1,k] += wavespd_l/2*(U_left[c]-U[c][1,k])
-            # graph_visc[c][end,k] += wavespd_r/2*(U_right[c]-U[c][end,k])
-            graph_visc[c][1,k] += wavespd_l*(U_left[c]-U[c][1,k])
-            graph_visc[c][end,k] += wavespd_r*(U_right[c]-U[c][end,k])
-        end
-    end
-    
-    return graph_visc
-end
-
 function rhs_low_inviscid(U,K,N,S0)
     J = (Br-Bl)/K/2 # assume uniform interval
     Nc = 3
@@ -495,17 +420,108 @@ function rhs_low_viscous(U,K,N,Qr0)
     return rhsU,sigma
 end
 
-function rhs_low(U,K,N,Mlump_inv,S0)
+function construct_artificial_wavespd(rhoL,mL,EL,rhoR,mR,ER,F1,F2,F3)
+    dij = abs(F1/(rhoL+rhoR))
+    rhosum = rhoL+rhoR
+    msum = mL+mR
+    Esum = EL+ER
+    a = rhosum*Esum-1/2*msum^2
+    b = rhosum*F3+Esum*F1-msum*F2
+    c = F1*F3-1/2*F2^2
+
+    if c >= 0 
+        return max(dij,0.0)
+    else
+        return max(dij,(b+sqrt(b^2-4*a*c))/(2*a))
+    end
+end
+
+function rhs_low_graph_visc(U,K,N,sigma,S0,S)
+    Nc = 3
+    p = pfun_nd.(U[1],U[2],U[3])
+    flux = zero.(U)
+    @. flux[1] = U[2]
+    @. flux[2] = U[2]^2/U[1]+p
+    @. flux[3] = U[3]*U[2]/U[1]+p*U[2]/U[1]
+    graph_visc = [zeros(N+1,K) for i = 1:Nc]
+
+    wavespd_arr = zeros(N+1,K)
+    for k = 1:K
+        for i = 1:N+1
+            wavespd_arr[i,k] = wavespeed_1D(U[1][i,k],U[2][i,k],U[3][i,k])
+        end
+    end
+
+    # Graph viscosity
+    for k = 1:K
+        for j = 1:N+1
+            for i = 1:N+1
+                if i != j
+                    # F1 = (sigma[1][i,k]+sigma[1][j,k])/2
+                    # F2 = (sigma[2][i,k]+sigma[2][j,k])/2
+                    # F3 = (sigma[3][i,k]+sigma[3][j,k])/2
+                    F1 = S0[i,j]*(flux[1][i,k]+flux[1][j,k])-S0[i,j]*(sigma[1][i,k]+sigma[1][j,k])
+                    F2 = S0[i,j]*(flux[2][i,k]+flux[2][j,k])-S0[i,j]*(sigma[2][i,k]+sigma[2][j,k])
+                    F3 = S0[i,j]*(flux[3][i,k]+flux[3][j,k])-S0[i,j]*(sigma[3][i,k]+sigma[3][j,k])
+                    wavespd = construct_artificial_wavespd(U[1][i,k],U[2][i,k],U[3][i,k],U[1][j,k],U[2][j,k],U[3][j,k],F1,F2,F3)
+                    # wavespd = max(wavespd_arr[i,k],wavespd_arr[j,k])
+                    for c = 1:Nc
+                        # graph_visc[c][i,k] += wavespd*abs(S0[i,j])*(U[c][j,k]-U[c][i,k])
+                        graph_visc[c][i,k] += wavespd*(U[c][j,k]-U[c][i,k])
+                    end
+                end
+            end
+        end
+
+        # Surface term (numerical fluxes)
+        U_left     = (k == 1) ? [rhoL; 0.0; pL/(γ-1)]  : [U[1][end,k-1]; U[2][end,k-1]; U[3][end,k-1]]
+        U_right    = (k == K) ? [rhoR; 0.0; pR/(γ-1)]  : [U[1][1,k+1]; U[2][1,k+1]; U[3][1,k+1]]
+        sigma_left  = (k == 1) ? [sigma[1][1,k];sigma[2][1,k];sigma[3][1,k]] : [sigma[1][end,k-1]; sigma[2][end,k-1]; sigma[3][end,k-1]]
+        sigma_right = (k == K) ? [sigma[1][end,k];sigma[2][end,k];sigma[3][end,k]] : [sigma[1][1,k+1]; sigma[2][1,k+1]; sigma[3][1,k+1]] 
+        f_left   = (k == 1) ? [0.0; pL; 0.0]           : [flux[1][end,k-1]; flux[2][end,k-1]; flux[3][end,k-1]]
+        f_right  = (k == K) ? [0.0; pR; 0.0]           : [flux[1][1,k+1]; flux[2][1,k+1]; flux[3][1,k+1]]
+        # wavespd_l = max(wavespd_arr[1,k],wavespeed_1D(U_left[1],U_left[2],U_left[3]))
+        # wavespd_r = max(wavespd_arr[end,k],wavespeed_1D(U_right[1],U_right[2],U_right[3]))
+        # F1 = (sigma[1][1,k]+sigma_left[2])/2
+        # F2 = (sigma[2][1,k]+sigma_left[2])/2
+        # F3 = (sigma[3][1,k]+sigma_left[3])/2
+        F1 = -1/2*(flux[1][1,k]+f_left[1])+1/2*(sigma[1][1,k]+sigma_left[1])
+        F2 = -1/2*(flux[2][1,k]+f_left[2])+1/2*(sigma[2][1,k]+sigma_left[2])
+        F3 = -1/2*(flux[3][1,k]+f_left[3])+1/2*(sigma[3][1,k]+sigma_left[3])
+        wavespd_l = construct_artificial_wavespd(U_left[1],U_left[2],U_left[3],U[1][1,k],U[2][1,k],U[3][1,k],F1,F2,F3)
+        # F1 = (sigma[1][end,k]+sigma_right[2])/2
+        # F2 = (sigma[2][end,k]+sigma_right[2])/2
+        # F3 = (sigma[3][end,k]+sigma_right[3])/2
+        F1 = 1/2*(flux[1][end,k]+f_right[1])-1/2*(sigma[1][end,k]+sigma_right[1])
+        F2 = 1/2*(flux[2][end,k]+f_right[2])-1/2*(sigma[2][end,k]+sigma_right[2])
+        F3 = 1/2*(flux[3][end,k]+f_right[3])-1/2*(sigma[3][end,k]+sigma_right[3])
+        wavespd_r = construct_artificial_wavespd(U_right[1],U_right[2],U_right[3],U[1][end,k],U[2][end,k],U[3][end,k],F1,F2,F3)
+
+        for c = 1:Nc
+            # graph_visc[c][1,k] += wavespd_l/2*(U_left[c]-U[c][1,k])
+            # graph_visc[c][end,k] += wavespd_r/2*(U_right[c]-U[c][end,k])
+            graph_visc[c][1,k] += wavespd_l*(U_left[c]-U[c][1,k])
+            graph_visc[c][end,k] += wavespd_r*(U_right[c]-U[c][end,k])
+        end
+    end
+    
+    return graph_visc
+end
+
+
+
+function rhs_low(U,K,N,Mlump_inv,S0,S)
     J = (Br-Bl)/K/2 # assume uniform interval
     Nc = 3
     rhsU = [zeros(N+1,K) for i = 1:Nc]
     rhsI = rhs_low_inviscid(U,K,N,S0)
     rhsV,sigma = rhs_low_viscous(U,K,N,Qr0)
-    graph_visc = rhs_low_graph_visc(U,K,N,sigma,S0)
+    graph_visc = rhs_low_graph_visc(U,K,N,sigma,S0,S)
 
     for k = 1:K
         for c = 1:Nc
             rhsU[c][:,k] = -1/J*Mlump_inv*(rhsI[c][:,k]-graph_visc[c][:,k]-rhsV[c][:,k])
+            #rhsU[c][:,k] = -1/J*Mlump_inv*(rhsI[c][:,k]-rhsV[c][:,k])
         end
     end
 
@@ -523,13 +539,15 @@ Vp = vandermonde_1D(N,LinRange(-1,1,10))/VDM
 gr(size=(300,300),ylims=(0,1.2),legend=false,markerstrokewidth=1,markersize=2)
 plot()
 
-dt = 0.000005
+dt = 0.000005 # Leblanc
+dt = 0.000001
+#dt = 0.0001 # Sod
 Nsteps = Int(T/dt)
 @gif for i = 1:Nsteps
     #rhsU = rhs_inviscid(U,K,N,Mlump_inv,S)
     #rhsU = rhs_ESDG(U,K,N,Mlump_inv,S)
     #rhsU = rhs_low_inviscid(U,K,N,Mlump_inv,S0)
-    rhsU = rhs_low(U,K,N,Mlump_inv,S0)
+    rhsU = rhs_low(U,K,N,Mlump_inv,S0,S)
     @. U = U + dt*rhsU
     global t = t + dt
     println("Current time $t with time step size $dt, and final time $T")  
