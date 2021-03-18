@@ -66,8 +66,8 @@ end
 
 const TOL = 1e-16
 "Approximation parameters"
-N = 5 # The order of approximation
-K = 20
+N = 8 # The order of approximation
+K = 10
 T = 1.0
 T = 6.0
 #T = 0.0039
@@ -540,7 +540,7 @@ gr(size=(300,300),ylims=(0,1.2),legend=false,markerstrokewidth=1,markersize=2)
 plot()
 
 dt = 0.000005 # Leblanc
-dt = 0.000001
+#dt = 0.000001
 #dt = 0.0001 # Sod
 Nsteps = Int(T/dt)
 @gif for i = 1:Nsteps
