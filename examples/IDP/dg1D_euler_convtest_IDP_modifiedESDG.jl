@@ -67,7 +67,7 @@ end
 const TOL = 1e-16
 "Approximation parameters"
 N = 2 # The order of approximation
-K = 100
+K = 1600
 T = 1.0
 T = 6.0
 #T = 0.0039
@@ -107,7 +107,7 @@ const rhoR = 1e-3
 const pL = (γ-1)*1e-1
 const pR = (γ-1)*1e-10
 const xC = 0.33
-const GIFINTERVAL = 60
+const GIFINTERVAL = 1000#60
 T = 2/3
 
 
@@ -275,8 +275,9 @@ function flux_high(f_i,f_j,c_ij)
     return c_ij*(f_i+f_j)
 end
 
-function flux_ES(rho_i,u_i,beta_i,rho_j,u_j,beta_j,c_ij)
-    return 2*c_ij.*euler_fluxes(rho_i,u_i,beta_i,rho_j,u_j,beta_j)
+function flux_ES(rho_i,u_i,beta_i,rho_j,u_j,beta_j,c_ij,f_i,f_j)
+    #return 2*c_ij.*euler_fluxes(rho_i,u_i,beta_i,rho_j,u_j,beta_j)
+    return c_ij*(f_i+f_j)
 end
 
 function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv)
@@ -492,10 +493,12 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,dt)
             for j = 1:N+1
                 if i != j # skip diagonal
                     wavespd = max(wavespd_arr[i,k],wavespd_arr[j,k])
-                    fluxS = flux_ES(Ub[1][i,k],Ub[2][i,k],Ub[3][i,k],Ub[1][j,k],Ub[2][j,k],Ub[3][j,k],S[i,j])
+                    #fluxS = flux_ES(Ub[1][i,k],Ub[2][i,k],Ub[3][i,k],Ub[1][j,k],Ub[2][j,k],Ub[3][j,k],S[i,j])
                     for c = 1:3
+                        fluxS = flux_ES(Ub[1][i,k],Ub[2][i,k],Ub[3][i,k],Ub[1][j,k],Ub[2][j,k],Ub[3][j,k],S[i,j],flux[c][i,k],flux[c][j,k])
                         F_low[c][i,j]  = flux_lowIDP(U[c][i,k],U[c][j,k],flux[c][i,k],flux[c][j,k],S0[i,j],wavespd)
-                        F_high[c][i,j] = fluxS[c]
+                        #F_high[c][i,j] = fluxS[c]
+                        F_high[c][i,j] = fluxS
                     end
                 end
             end
@@ -561,16 +564,23 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,dt)
             end
         end 
 
-        # # elementwise limiting
-        # l = minimum(L)
-        # for i = 1:N+1
-        #     for j = 1:N+1
-        #         if i != j
-        #             L[i,j] = l
-        #             L[j,i] = l
-        #         end
-        #     end
-        # end 
+        # elementwise limiting
+        l = 1.0
+        for i = 1:N+1
+            for j = 1:N+1
+                if i != j
+                    l = min(l,L[i,j])
+                end
+            end
+        end
+        for i = 1:N+1
+            for j = 1:N+1
+                if i != j
+                    L[i,j] = l
+                    L[j,i] = l
+                end
+            end
+        end 
 
         # construct rhs
         for c = 1:3
@@ -593,22 +603,25 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,dt)
 
         L_plot[k] = sum(L)
         for i = 1:N+1
-            L_plot2[i,k] = sum(L[i,:])
+            L_plot2[i,k] = sum(L[i,:])/N
         end
-        L_plot2[1,k] += 1.0
-        L_plot2[end,k] += 1.0
-
-        L_plot2[1,k] = L_plot2[1,k]/(N+1)
-        L_plot2[end,k] = L_plot2[end,k]/(N+1)
-        for i = 2:N
-            L_plot2[i,k] = L_plot2[i,k]/N
-        end
+        # for i = 1:N+1
+        #     L_plot2[i,k] = l
+        # end
     end
 
     return rhsU,L_plot,L_plot2
 end
 
-function rhs_IDPlow(U,K,N,Mlump_inv,p,flux,J)
+function rhs_IDPlow(U,K,N,Mlump_inv)
+    p = pfun_nd.(U[1],U[2],U[3])
+    flux = zero.(U)
+    @. flux[1] = U[2]
+    @. flux[2] = U[2]^2/U[1]+p
+    @. flux[3] = U[3]*U[2]/U[1]+p*U[2]/U[1]
+
+    J = (Br-Bl)/K/2
+
     dfdx = (zeros(N+1,K),zeros(N+1,K),zeros(N+1,K))
     for i = 2:K*(N+1)-1
         for c = 1:3
@@ -804,12 +817,21 @@ for i = 1:Nsteps
     # SSPRK(3,3)
     rhsU,_,_ = rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,dt)
     @. resW = U + dt*rhsU
-    rhsU,_,_ = rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,dt)
+    rhsU,_,_ = rhs_IDP(resW,K,N,wq,S,S0,Mlump_inv,dt)
     @. resZ = resW+dt*rhsU
     @. resW = 3/4*U+1/4*resZ
-    rhsU,_,_ = rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,dt)
+    rhsU,L_plot,L_plot2 = rhs_IDP(resW,K,N,wq,S,S0,Mlump_inv,dt)
     @. resZ = resW+dt*rhsU
     @. U = 1/3*U+2/3*resZ
+
+    # rhsU = rhs_IDPlow(U,K,N,Mlump_inv)
+    # @. resW = U + dt*rhsU
+    # rhsU = rhs_IDPlow(U,K,N,Mlump_inv)
+    # @. resZ = resW+dt*rhsU
+    # @. resW = 3/4*U+1/4*resZ
+    # rhsU = rhs_IDPlow(U,K,N,Mlump_inv)
+    # @. resZ = resW+dt*rhsU
+    # @. U = 1/3*U+2/3*resZ
 
 
 
@@ -820,15 +842,15 @@ for i = 1:Nsteps
     end
     # if i % GIFINTERVAL == 0  
     #     plot(Vp*x,Vp*U[1])
-    #     # # # plot(Vp*x,Vp*U[3])
-    #     # # plot!(Bl+(Br-Bl)/K/2:(Br-Bl)/K:Br-(Br-Bl)/K/2,1 .-L_plot/N/(N+1),st=:bar,alpha=.2)
-    #     # ptL = Bl+(Br-Bl)/K/(N+1)/2
-    #     # ptR = Br-(Br-Bl)/K/(N+1)/2
-    #     # hplot = (Br-Bl)/K/(N+1)
-    #     # for k = 1:K
-    #     #     plot!(ptL+(k-1)*hplot*(N+1):hplot:ptL+k*hplot*(N+1), 1 .-L_plot2[:,k],st=:bar,alpha=0.2)
-    #     # end
-    #     # # #plot!(Bl+(Br-Bl)/K/(N+1)/2:(Br-Bl)/K/(N+1):Br-(Br-Bl)/K/(N+1)/2,1 .-L_plot2[:],st=:bar,alpha=.2)
+    #     # # plot(Vp*x,Vp*U[3])
+    #     # plot!(Bl+(Br-Bl)/K/2:(Br-Bl)/K:Br-(Br-Bl)/K/2,1 .-L_plot/N/(N+1),st=:bar,alpha=.2)
+    #     ptL = Bl+(Br-Bl)/K/(N+1)/2
+    #     ptR = Br-(Br-Bl)/K/(N+1)/2
+    #     hplot = (Br-Bl)/K/(N+1)
+    #     for k = 1:K
+    #         plot!(ptL+(k-1)*hplot*(N+1):hplot:ptL+k*hplot*(N+1), 1 .-L_plot2[:,k],st=:bar,alpha=0.2)
+    #     end
+    #     # #plot!(Bl+(Br-Bl)/K/(N+1)/2:(Br-Bl)/K/(N+1):Br-(Br-Bl)/K/(N+1)/2,1 .-L_plot2[:],st=:bar,alpha=.2)
     # end
 #end every GIFINTERVAL
 end
@@ -846,8 +868,13 @@ exact_p = [x[3] for x in exact_sol]
 rho = U[1]
 u = U[2]./U[1]
 p = pfun_nd.(U[1],U[2],U[3])
+J = (Br-Bl)/K/2
 @show maximum(abs.(exact_rho-rho))
 @show maximum(abs.(exact_u-u))
 @show maximum(abs.(exact_p-p))
+
+@show sum(J*abs.(exact_rho-rho))
+@show sum(J*abs.(exact_u-u))
+@show sum(J*abs.(exact_p-p))
 
 plot(Vp*x,Vp*U[1])
