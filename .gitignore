@@ -12,3 +12,4 @@ demo*.jl
 .DS_Store
 
 *.png
+*.txt

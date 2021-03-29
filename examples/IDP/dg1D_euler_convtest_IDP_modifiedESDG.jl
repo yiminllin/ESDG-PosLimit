@@ -66,11 +66,58 @@ end
 
 const TOL = 1e-16
 "Approximation parameters"
-N = 2 # The order of approximation
-K = 1600
-T = 1.0
-T = 6.0
-#T = 0.0039
+N = 4 # The order of approximation
+K = 1000
+t0 = 0.1
+gr(size=(300,300),ylims=(0,1.2),legend=false,markerstrokewidth=1,markersize=2)
+plot()
+#gr(size=(300,300),ylims=(0,3.5),legend=false,markerstrokewidth=1,markersize=2)
+#dt = 0.001
+#dt = 0.005
+#dt = 0.0001
+dt = 0.00001
+
+function exact_sol_Leblanc(x,t)
+    xi = (x-0.33)/t
+    rhoLstar = 5.4079335349316249*1e-2
+    rhoRstar = 3.9999980604299963*1e-3
+    vstar    = 0.62183867139173454
+    pstar    = 0.51557792765096996*1e-3
+    lambda1  = 0.49578489518897934
+    lambda3  = 0.82911836253346982
+    if xi <= -1/3
+        return rhoL, 0.0, pL
+    elseif xi <= lambda1
+        return (0.75-0.75*xi)^3, 0.75*(1/3+xi), 1/15*(0.75-0.75*xi)^5
+    elseif xi <= vstar
+        return rhoLstar, vstar, pstar
+    elseif xi <= lambda3
+        return rhoRstar, vstar, pstar
+    else
+        return rhoR, 0.0, pR
+    end
+end
+
+function exact_sol_Leblanc(x,t)
+    xi = (x-0.33)/t
+    rhoLstar = 5.4079335349316249*1e-2
+    rhoRstar = 3.9999980604299963*1e-3
+    vstar    = 0.62183867139173454
+    pstar    = 0.51557792765096996*1e-3
+    lambda1  = 0.49578489518897934
+    lambda3  = 0.82911836253346982
+    if xi <= -1/3
+        return rhoL, 0.0, pL
+    elseif xi <= lambda1
+        return (0.75-0.75*xi)^3, 0.75*(1/3+xi), 1/15*(0.75-0.75*xi)^5
+    elseif xi <= vstar
+        return rhoLstar, vstar, pstar
+    elseif xi <= lambda3
+        return rhoRstar, vstar, pstar
+    else
+        return rhoR, 0.0, pR
+    end
+end
 
 # # Sod shocktube
 # const γ = 1.4
@@ -80,9 +127,39 @@ T = 6.0
 # const rhoR = 0.125
 # const pL = 1.0
 # const pR = 0.1
+# const uL = 0.0
+# const uR = 0.0
 # const xC = 0.0
-# const GIFINTERVAL = 20
 # T = 0.2
+# t0 = 0.0
+
+# # Sod shocktube 2
+# const γ = 1.4
+# const Bl = -0.5
+# const Br = 0.5
+# const rhoL = 1.0
+# const rhoR = 0.5
+# const pL = 1.0
+# const pR = 0.5
+# const uL = 0.0
+# const uR = 0.0
+# const xC = 0.0
+# T = 0.2
+# t0 = 0.0
+
+# Sod shocktube 3
+const γ = 1.4
+const Bl = -0.5
+const Br = 0.5
+const rhoL = 1.0
+const rhoR = 0.05
+const pL = 1.0
+const pR = 0.04
+const uL = 0.0
+const uR = 0.0
+const xC = 0.0
+T = 0.2
+t0 = 0.0
 
 # # Leblanc shocktube
 # const γ = 5/3
@@ -92,25 +169,44 @@ T = 6.0
 # const rhoR = 0.001
 # const pL = 0.1
 # const pR = 1e-7
+# const uL = 0.0
+# const uR = 0.0
 # #const pR = 1e-15
 # const xC = 3.0
-# const GIFINTERVAL = 60
 # T = 6.0
+# t0 = 0.0
 
 
-# Conv test 
-const γ = 5/3
-const Bl = 0.0
-const Br = 1.0
-const rhoL = 1.0
-const rhoR = 1e-3
-const pL = (γ-1)*1e-1
-const pR = (γ-1)*1e-10
-const xC = 0.33
-const GIFINTERVAL = 1000#60
-T = 2/3
+# # Ignacio - Leblanc shocktube
+# const γ = 5/3
+# const Bl = 0.0
+# const Br = 1.0
+# const rhoL = 1.0
+# const rhoR = 1e-3
+# const pL = (γ-1)*1e-1
+# const pR = (γ-1)*1e-10
+# const xC = 0.33
+# T = 2/3
+# exact_sol = exact_sol_Leblanc
 
 
+
+# # Ignacio - Rarefaction wave 
+# const γ = 7/5
+# const Bl = 0.0
+# const Br = 1.0
+# const rhoL = 3.0
+# const pL   = 1.0
+# const cL   = sqrt(γ*pL/rhoL)
+# const uL   = cL
+# const rhoR = 1/2
+# const pR   = pL*(rhoR/rhoL)^γ
+# const cR   = sqrt(γ*pR/rhoR)
+# const uR   = uL+2*(cL)/(γ-1)-2*(cR)/(γ-1)
+# T = 0.5
+# exact_sol = exact_sol_Rarefraction
+
+const GIFINTERVAL = Int(floor((T-t0)/dt/60))
 
 "Mesh related variables"
 VX = LinRange(Bl,Br,K+1)
@@ -181,18 +277,6 @@ J = repeat(transpose(diff(VX)/2),N+1,1)
 nxJ = repeat([-1;1],1,K)
 rxJ = 1.0
 
-
-# """Low order mesh"""
-# VX0 = [x[1:end-1,:][:]; x[end]]
-# #EToV = transpose(reshape(sort([1:K; 2:K+1]),2,K)
-# EToV0 = transpose(reshape(sort([1:N*K; 2:N*K+1]),2,N*K))
-# x0 = VX0[transpose(EToV0)]
-# xf0 = x0 
-# mapM0 = reshape(1:2*N*K,2,N*K)
-# mapP0 = copy(mapM0)
-# mapP0[1,2:end] .= mapM0[2,1:end-1]
-# mapP0[2,1:end-1] .= mapM0[1,2:end]
-
 """Geometric factors"""
 J = repeat(transpose(diff(VX)/2),N+1,1)
 nxJ = repeat([-1;1],1,K)
@@ -203,40 +287,21 @@ rho_x(x) = (x <= xC) ? rhoL : rhoR
 u_x(x) = 0.0
 p_x(x) = (x <= xC) ? pL : pR 
 
-function exact_sol_Leblanc(x,t)
-    xi = (x-0.33)/t
-    rhoLstar = 5.4079335349316249*1e-2
-    rhoRstar = 3.9999980604299963*1e-3
-    vstar    = 0.62183867139173454
-    pstar    = 0.51557792765096996*1e-3
-    lambda1  = 0.49578489518897934
-    lambda3  = 0.82911836253346982
-    if xi <= -1/3
-        return rhoL, 0.0, pL
-    elseif xi <= lambda1
-        return (0.75-0.75*xi)^3, 0.75*(1/3+xi), 1/15*(0.75-0.75*xi)^5
-    elseif xi <= vstar
-        return rhoLstar, vstar, pstar
-    elseif xi <= lambda3
-        return rhoRstar, vstar, pstar
-    else
-        return rhoR, 0.0, pR
-    end
-end
 
-# rho = @. rho_x(x)
-# u = @. u_x(x)
-# p = @. p_x(x)
-t0 = 0.1
-U_init = @. exact_sol_Leblanc(x,t0)
-rho_init = [x[1] for x in U_init]
-u_init = [x[2] for x in U_init]
-p_init = [x[3] for x in U_init]
-U = primitive_to_conservative_hardcode.(rho_init,u_init,p_init)
-rho = [x[1] for x in U]
-rhou = [x[2] for x in U]
-E = [x[3] for x in U]
-U = (rho,rhou,E)
+rho = @. rho_x(x)
+u = @. u_x(x)
+p = @. p_x(x)
+U = primitive_to_conservative_hardcode(rho,u,p)
+
+# U_init = @. exact_sol(x,t0)
+# rho_init = [x[1] for x in U_init]
+# u_init = [x[2] for x in U_init]
+# p_init = [x[3] for x in U_init]
+# U = primitive_to_conservative_hardcode.(rho_init,u_init,p_init)
+# rho = [x[1] for x in U]
+# rhou = [x[2] for x in U]
+# E = [x[3] for x in U]
+# U = (rho,rhou,E)
 
 function limiting_param(U_low, P_ij)
     l = 1.0
@@ -275,183 +340,13 @@ function flux_high(f_i,f_j,c_ij)
     return c_ij*(f_i+f_j)
 end
 
-function flux_ES(rho_i,u_i,beta_i,rho_j,u_j,beta_j,c_ij,f_i,f_j)
-    #return 2*c_ij.*euler_fluxes(rho_i,u_i,beta_i,rho_j,u_j,beta_j)
+function flux_ES(rho_i,u_i,beta_i,rho_j,u_j,beta_j,c_ij)
+    return 2*c_ij.*euler_fluxes(rho_i,u_i,beta_i,rho_j,u_j,beta_j)
+end
+
+function flux_central(c_ij,f_i,f_j)
     return c_ij*(f_i+f_j)
 end
-
-function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv)
-    p = pfun_nd.(U[1],U[2],U[3])
-    flux = zero.(U)
-    @. flux[1] = U[2]
-    @. flux[2] = U[2]^2/U[1]+p
-    @. flux[3] = U[3]*U[2]/U[1]+p*U[2]/U[1]
-
-    Ub = zero.(U)
-    @. Ub[1] = U[1]
-    @. Ub[2] = U[2]/U[1]
-    @. Ub[3] = U[1]/(2*p)
-
-    J = (Br-Bl)/K/2 # assume uniform interval
-
-    # Low order and high order algebraic fluxes
-    F_low       = [zeros(N+1,N+1),zeros(N+1,N+1),zeros(N+1,N+1)]
-    F_high      = [zeros(N+1,N+1),zeros(N+1,N+1),zeros(N+1,N+1)]
-    F_low_P     = [zeros(2),zeros(2),zeros(2)] # 1: left boundary, 2: right boundary
-    F_high_P    = [zeros(2),zeros(2),zeros(2)]
-    L           = zeros(N+1,N+1) # Array of limiting params
-    L_P         = zeros(K-1) # limiting params at left/right boundary
-    rhsU        = [zeros(N+1,K),zeros(N+1,K),zeros(N+1,K)]
-
-    L_plot = zeros(K)
-    L_plot2 = zeros(N+1,K)
-
-    wavespd_arr = zeros(N+1,K)
-    for k = 1:K
-        for i = 1:N+1
-            wavespd_arr[i,k] = wavespeed_1D(U[1][i,k],U[2][i,k],U[3][i,k])
-        end
-    end
-
-    d_ii_arr = zeros(N+1,K)
-    for k = 1:K
-        for i = 1:N+1
-            for j = 1:N+1
-                if i != j
-                    wavespd = max(wavespd_arr[i,k],wavespd_arr[j,k])
-                    d_ij = wavespd*abs(S0[i,j])
-                    d_ii_arr[i,k] -= d_ij
-                end
-            end
-            if i == 1
-                U_left   = (k == 1) ? [rhoL; 0.0; pL/(γ-1)]    : [U[1][end,k-1]; U[2][end,k-1]; U[3][end,k-1]]
-                wavespd = max(wavespd_arr[1,k],wavespeed_1D(U_left[1],U_left[2],U_left[3]))
-                d_ij = wavespd/2.0
-                d_ii_arr[i,k] -= d_ij
-            end
-            if i == N+1
-                U_right  = (k == K) ? [rhoR; 0.0; pR/(γ-1)]    : [U[1][1,k+1]; U[2][1,k+1]; U[3][1,k+1]]
-                wavespd = max(wavespd_arr[end,k],wavespeed_1D(U_right[1],U_right[2],U_right[3]))
-                d_ij = wavespd/2.0
-                d_ii_arr[i,k] -= d_ij
-            end
-        end
-    end
-    
-    dt = minimum(-J/2*M*(1 ./d_ii_arr))
-
-    for k = 1:K
-        # Assemble matrix of low and high order algebraic fluxes
-        # interior of the element
-        for i = 1:N+1
-            for j = 1:N+1
-                if i != j # skip diagonal
-                    wavespd = max(wavespd_arr[i,k],wavespd_arr[j,k])
-                    fluxS = flux_ES(Ub[1][i,k],Ub[2][i,k],Ub[3][i,k],Ub[1][j,k],Ub[2][j,k],Ub[3][j,k],S[i,j])
-                    for c = 1:3
-                        F_low[c][i,j]  = flux_lowIDP(U[c][i,k],U[c][j,k],flux[c][i,k],flux[c][j,k],S0[i,j],wavespd)
-                        F_high[c][i,j] = fluxS[c]
-                    end
-                end
-            end
-        end
-
-        # Assemble matrix of low and high order algebraic fluxes
-        # interface of the element
-
-        U_left   = (k == 1) ? [rhoL; 0.0; pL/(γ-1)]    : [U[1][end,k-1]; U[2][end,k-1]; U[3][end,k-1]]
-        Ub_left  = (k == 1) ? [rhoL; 0.0; rhoL/(2*pL)] : [Ub[1][end,k-1]; Ub[2][end,k-1]; Ub[3][end,k-1]]
-        f_left   = (k == 1) ? [0.0; pL; 0.0]           : [flux[1][end,k-1]; flux[2][end,k-1]; flux[3][end,k-1]]
-        U_right  = (k == K) ? [rhoR; 0.0; pR/(γ-1)]    : [U[1][1,k+1]; U[2][1,k+1]; U[3][1,k+1]]
-        Ub_right = (k == K) ? [rhoR; 0.0; rhoR/(2*pR)] : [Ub[1][1,k+1]; Ub[2][1,k+1]; Ub[3][1,k+1]]
-        f_right  = (k == K) ? [0.0; pR; 0.0]           : [flux[1][1,k+1]; flux[2][1,k+1]; flux[3][1,k+1]]
-        wavespd_l = max(wavespd_arr[1,k],wavespeed_1D(U_left[1],U_left[2],U_left[3]))
-        wavespd_r = max(wavespd_arr[end,k],wavespeed_1D(U_right[1],U_right[2],U_right[3]))
-
-        # fluxS_l = flux_ES(Ub[1][1,k],Ub[2][1,k],Ub[3][1,k],Ub_left[1],Ub_left[2],Ub_left[3],-0.5)
-        # fluxS_r = flux_ES(Ub[1][end,k],Ub[2][end,k],Ub[3][end,k],Ub_right[1],Ub_right[2],Ub_right[3],0.5)
-        tmp = .-euler_fluxes(Ub[1][1,k],Ub[2][1,k],Ub[3][1,k],Ub_left[1],Ub_left[2],Ub_left[3])
-        tmp2 = euler_fluxes(Ub[1][end,k],Ub[2][end,k],Ub[3][end,k],Ub_right[1],Ub_right[2],Ub_right[3])
-        for c = 1:3
-            F_low_P[c][1] = flux_lowIDP(U[c][1,k],U_left[c],flux[c][1,k],f_left[c],-0.5,wavespd_l) 
-            F_low_P[c][2] = flux_lowIDP(U[c][end,k],U_right[c],flux[c][end,k],f_right[c],0.5,wavespd_r)
-
-            # F_high_P[c][1] = fluxS_l[c]-wavespd_l/2*(Ub_left[c]-Ub[c][1,k])
-            # F_high_P[c][2] = fluxS_r[c]-wavespd_r/2*(Ub_right[c]-Ub[c][end,k])
-            F_high_P[c][1] = F_low_P[c][1]#tmp[c]-wavespd_l/2*(U_left[c]-U[c][1,k])#-euler_fluxes(Ub[c][1,k],Ub_left[c])#flux_high(Ub[c][1,k],Ub_left[c],-0.5)-wavespd_l/2*(Ub_left[c]-Ub[c][1,k])
-            F_high_P[c][2] = F_low_P[c][2]#tmp2[c]-wavespd_r/2*(U_right[c]-U[c][end,k])#euler_fluxes(Ub[c][end,k],Ub_right[c])#flux_high(Ub[c][end,k],Ub_right[c],0.5)-wavespd_r/2*(Ub_right[c]-Ub[c][end,k])
-        end
-
-        # Calculate limiting parameters over interior of the element
-        P_ij = zeros(3,1)
-        # TODO: redundant
-        U_low =  [zeros(N+1,1),zeros(N+1,1),zeros(N+1,1)]
-        for c = 1:3
-            U_low[c] .= sum(-F_low[c],dims=2)
-            U_low[c][1] -= F_low_P[c][1]
-            U_low[c][end] -= F_low_P[c][2]
-            U_low[c] .= U[c][:,k]+dt/J*Mlump_inv*U_low[c]
-        end
-        for i = 1:N+1
-            lambda_j = (i >= 2 && i <= N) ? 1/N : 1/(N+1)
-            m_i = J*wq[i]
-            for j = 1:N+1
-                if i != j 
-                    for c = 1:3
-                        P_ij[c] = dt/(m_i*lambda_j)*(F_low[c][i,j]-F_high[c][i,j])
-                    end
-                    L[i,j] = limiting_param([U_low[1][i]; U_low[2][i]; U_low[3][i]],P_ij)
-                end
-            end
-        end
-        
-        # Symmetrize limiting parameters
-        for i = 1:N+1
-            for j = 1:N+1
-                if i != j
-                    l_ij = min(L[i,j],L[j,i])
-                    L[i,j] = l_ij
-                    L[j,i] = l_ij
-                end
-            end
-        end 
-
-        # construct rhs
-        for c = 1:3
-            # With limiting
-            rhsU[c][:,k] = sum((L.-1).*F_low[c] - L.*F_high[c],dims=2)
-
-            if k > 1
-                rhsU[c][1,k] += (L_P[k-1]-1)*F_low_P[c][1] - L_P[k-1]*F_high_P[c][1]
-            else
-                rhsU[c][1,k] += -F_high_P[c][1]#-F_low_P[c][1]
-            end
-            if k < K
-                rhsU[c][N+1,k] += (L_P[k]-1)*F_low_P[c][2] - L_P[k]*F_high_P[c][2]
-            else
-                rhsU[c][N+1,k] += -F_high_P[c][2]#-F_low_P[c][2]
-            end
-
-            rhsU[c][:,k] .= 1/J*Mlump_inv*rhsU[c][:,k]
-        end
-
-        L_plot[k] = sum(L)
-        for i = 1:N+1
-            L_plot2[i,k] = sum(L[i,:])
-        end
-        L_plot2[1,k] += 1.0
-        L_plot2[end,k] += 1.0
-
-        L_plot2[1,k] = L_plot2[1,k]/(N+1)
-        L_plot2[end,k] = L_plot2[end,k]/(N+1)
-        for i = 2:N
-            L_plot2[i,k] = L_plot2[i,k]/N
-        end
-    end
-
-    return rhsU,L_plot,L_plot2,dt
-end
-
 
 function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,dt)
     p = pfun_nd.(U[1],U[2],U[3])
@@ -487,18 +382,19 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,dt)
     end
 
     for k = 1:K
+        L = zeros(N+1,N+1)
         # Assemble matrix of low and high order algebraic fluxes
         # interior of the element
         for i = 1:N+1
             for j = 1:N+1
                 if i != j # skip diagonal
                     wavespd = max(wavespd_arr[i,k],wavespd_arr[j,k])
-                    #fluxS = flux_ES(Ub[1][i,k],Ub[2][i,k],Ub[3][i,k],Ub[1][j,k],Ub[2][j,k],Ub[3][j,k],S[i,j])
+                    fluxS = flux_ES(Ub[1][i,k],Ub[2][i,k],Ub[3][i,k],Ub[1][j,k],Ub[2][j,k],Ub[3][j,k],S[i,j])
                     for c = 1:3
-                        fluxS = flux_ES(Ub[1][i,k],Ub[2][i,k],Ub[3][i,k],Ub[1][j,k],Ub[2][j,k],Ub[3][j,k],S[i,j],flux[c][i,k],flux[c][j,k])
+                        # fluxS = flux_central(S[i,j],flux[c][i,k],flux[c][j,k])
+                        # F_high[c][i,j] = fluxS
                         F_low[c][i,j]  = flux_lowIDP(U[c][i,k],U[c][j,k],flux[c][i,k],flux[c][j,k],S0[i,j],wavespd)
-                        #F_high[c][i,j] = fluxS[c]
-                        F_high[c][i,j] = fluxS
+                        F_high[c][i,j] = fluxS[c]
                     end
                 end
             end
@@ -506,28 +402,29 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,dt)
 
         # Assemble matrix of low and high order algebraic fluxes
         # interface of the element
-
-        U_left   = (k == 1) ? [rhoL; 0.0; pL/(γ-1)]    : [U[1][end,k-1]; U[2][end,k-1]; U[3][end,k-1]]
-        Ub_left  = (k == 1) ? [rhoL; 0.0; rhoL/(2*pL)] : [Ub[1][end,k-1]; Ub[2][end,k-1]; Ub[3][end,k-1]]
-        f_left   = (k == 1) ? [0.0; pL; 0.0]           : [flux[1][end,k-1]; flux[2][end,k-1]; flux[3][end,k-1]]
-        U_right  = (k == K) ? [rhoR; 0.0; pR/(γ-1)]    : [U[1][1,k+1]; U[2][1,k+1]; U[3][1,k+1]]
-        Ub_right = (k == K) ? [rhoR; 0.0; rhoR/(2*pR)] : [Ub[1][1,k+1]; Ub[2][1,k+1]; Ub[3][1,k+1]]
-        f_right  = (k == K) ? [0.0; pR; 0.0]           : [flux[1][1,k+1]; flux[2][1,k+1]; flux[3][1,k+1]]
+        # U_left   = (k == 1) ? [rhoL; 0.0; pL/(γ-1)]    : [U[1][end,k-1]; U[2][end,k-1]; U[3][end,k-1]]
+        # Ub_left  = (k == 1) ? [rhoL; 0.0; rhoL/(2*pL)] : [Ub[1][end,k-1]; Ub[2][end,k-1]; Ub[3][end,k-1]]
+        # f_left   = (k == 1) ? [0.0; pL; 0.0]           : [flux[1][end,k-1]; flux[2][end,k-1]; flux[3][end,k-1]]
+        # U_right  = (k == K) ? [rhoR; 0.0; pR/(γ-1)]    : [U[1][1,k+1]; U[2][1,k+1]; U[3][1,k+1]]
+        # Ub_right = (k == K) ? [rhoR; 0.0; rhoR/(2*pR)] : [Ub[1][1,k+1]; Ub[2][1,k+1]; Ub[3][1,k+1]]
+        # f_right  = (k == K) ? [0.0; pR; 0.0]           : [flux[1][1,k+1]; flux[2][1,k+1]; flux[3][1,k+1]]
+        EL = pL/(γ-1)+0.5*rhoL*uL^2
+        ER = pR/(γ-1)+0.5*rhoR*uR^2
+        U_left   = (k == 1) ? [rhoL; rhoL*uL; EL]                 : [U[1][end,k-1]; U[2][end,k-1]; U[3][end,k-1]]
+        Ub_left  = (k == 1) ? [rhoL; uL; rhoL/(2*pL)]             : [Ub[1][end,k-1]; Ub[2][end,k-1]; Ub[3][end,k-1]]
+        f_left   = (k == 1) ? [rhoL*uL; rhoL*uL^2+pL; uL*(pL+EL)] : [flux[1][end,k-1]; flux[2][end,k-1]; flux[3][end,k-1]]
+        U_right  = (k == K) ? [rhoR; rhoR*uR; ER]                 : [U[1][1,k+1]; U[2][1,k+1]; U[3][1,k+1]]
+        Ub_right = (k == K) ? [rhoR; uR; rhoR/(2*pR)]             : [Ub[1][1,k+1]; Ub[2][1,k+1]; Ub[3][1,k+1]]
+        f_right  = (k == K) ? [rhoR*uR; rhoR*uR^2+pR; uR*(pR+ER)] : [flux[1][1,k+1]; flux[2][1,k+1]; flux[3][1,k+1]]
         wavespd_l = max(wavespd_arr[1,k],wavespeed_1D(U_left[1],U_left[2],U_left[3]))
         wavespd_r = max(wavespd_arr[end,k],wavespeed_1D(U_right[1],U_right[2],U_right[3]))
 
-        # fluxS_l = flux_ES(Ub[1][1,k],Ub[2][1,k],Ub[3][1,k],Ub_left[1],Ub_left[2],Ub_left[3],-0.5)
-        # fluxS_r = flux_ES(Ub[1][end,k],Ub[2][end,k],Ub[3][end,k],Ub_right[1],Ub_right[2],Ub_right[3],0.5)
-        tmp = .-euler_fluxes(Ub[1][1,k],Ub[2][1,k],Ub[3][1,k],Ub_left[1],Ub_left[2],Ub_left[3])
-        tmp2 = euler_fluxes(Ub[1][end,k],Ub[2][end,k],Ub[3][end,k],Ub_right[1],Ub_right[2],Ub_right[3])
         for c = 1:3
             F_low_P[c][1] = flux_lowIDP(U[c][1,k],U_left[c],flux[c][1,k],f_left[c],-0.5,wavespd_l) 
             F_low_P[c][2] = flux_lowIDP(U[c][end,k],U_right[c],flux[c][end,k],f_right[c],0.5,wavespd_r)
 
-            # F_high_P[c][1] = fluxS_l[c]-wavespd_l/2*(Ub_left[c]-Ub[c][1,k])
-            # F_high_P[c][2] = fluxS_r[c]-wavespd_r/2*(Ub_right[c]-Ub[c][end,k])
-            F_high_P[c][1] = F_low_P[c][1]#tmp[c]-wavespd_l/2*(U_left[c]-U[c][1,k])#-euler_fluxes(Ub[c][1,k],Ub_left[c])#flux_high(Ub[c][1,k],Ub_left[c],-0.5)-wavespd_l/2*(Ub_left[c]-Ub[c][1,k])
-            F_high_P[c][2] = F_low_P[c][2]#tmp2[c]-wavespd_r/2*(U_right[c]-U[c][end,k])#euler_fluxes(Ub[c][end,k],Ub_right[c])#flux_high(Ub[c][end,k],Ub_right[c],0.5)-wavespd_r/2*(Ub_right[c]-Ub[c][end,k])
+            F_high_P[c][1] = F_low_P[c][1]
+            F_high_P[c][2] = F_low_P[c][2]
         end
 
         # Calculate limiting parameters over interior of the element
@@ -541,7 +438,8 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,dt)
             U_low[c] .= U[c][:,k]+dt/J*Mlump_inv*U_low[c]
         end
         for i = 1:N+1
-            lambda_j = (i >= 2 && i <= N) ? 1/N : 1/(N+1)
+            #lambda_j = (i >= 2 && i <= N) ? 1/N : 1/(N+1)
+            lambda_j = 1/N
             m_i = J*wq[i]
             for j = 1:N+1
                 if i != j 
@@ -602,12 +500,12 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,dt)
         end
 
         L_plot[k] = sum(L)
-        for i = 1:N+1
-            L_plot2[i,k] = sum(L[i,:])/N
-        end
         # for i = 1:N+1
-        #     L_plot2[i,k] = l
+        #     L_plot2[i,k] = sum(L[i,:])/N
         # end
+        for i = 1:N+1
+            L_plot2[i,k] = l
+        end
     end
 
     return rhsU,L_plot,L_plot2
@@ -757,124 +655,80 @@ end
 t = t0
 U = collect(U)
 
-# # Forward Euler
-# while t < T
-#     dt = 0.0001
-#     rhsU = rhs_IDP(U,K,N,wq,S,S0,dt,Mlump_inv)
-#     @. U = U + dt*rhsU
-#     global t = t + dt
-#     println("Current time $t with time step size $dt, and final time $T")
-# end
 
-# Vp = vandermonde_1D(N,LinRange(-1,1,10))/VDM
-# gr(size=(300,300),ylims=(0,1.2),legend=false,markerstrokewidth=1,markersize=2)
-# plt = plot(Vp*x,Vp*U[1])
-
-
-# Vp = vandermonde_1D(N,LinRange(-1,1,10))/VDM
-# gr(size=(300,300),ylims=(0,1.2),legend=false,markerstrokewidth=1,markersize=2)
-# plot()
-# dt_hist = []
-
-# while t < T
-#     rhsU,L_plot,L_plot2,dt = rhs_IDP(U,K,N,wq,S,S0,Mlump_inv)
-#     @. U = U + dt*rhsU
-#     push!(dt_hist,dt)
-#     global t = t + dt
-#     println("Current time $t with time step size $dt, and final time $T")  
-# end
-
-# plot(Vp*x,Vp*U[1])
-# savefig("~/Desktop/N=$N,K=$K,modifiedESDG.png")
-
-# gr(size=(300,300),ylims=(0,2*maximum(dt_hist)),legend=false,markerstrokewidth=1,markersize=2)
-# plot(1:length(dt_hist),dt_hist)
-# savefig("~/Desktop/N=$N,K=$K,modifiedESDG_dthist.png")
-
-
-gr(size=(300,300),ylims=(0,1.2),legend=false,markerstrokewidth=1,markersize=2)
 Vp = vandermonde_1D(N,LinRange(-1,1,10))/VDM
-#dt = 0.001
-#dt = 0.0001
-dt = 0.00002
 Nsteps = Int(ceil((T-t0)/dt))
 resW = [zeros(size(x)),zeros(size(x)),zeros(size(x))]
 resZ = [zeros(size(x)),zeros(size(x)),zeros(size(x))]
-for i = 1:Nsteps
-#@gif for i = 1:Nsteps
+#for i = 1:Nsteps
+@gif for i = 1:Nsteps
 
     if abs(T-t) < dt
         global dt = T - t
     end
 
-    # # Forward Euler
-    # #rhsU,L_plot,L_plot2 = rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,dt)
-    # rhsU = rhs_IDPlow(U,K,N,Mlump_inv)
-    # #rhsU,L_plot,L_plot2,dt = rhs_IDP(U,K,N,wq,S,S0,Mlump_inv)
-    # #rhsU = rhs_high(U,K,N,Mlump_inv,S)
-    # @. U = U + dt*rhsU
-
     # SSPRK(3,3)
-    rhsU,_,_ = rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,dt)
+    rhsU,L_plot,L_plot2 = rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,dt)
+    #rhsU = rhs_high(U,K,N,Mlump_inv,S)
     @. resW = U + dt*rhsU
     rhsU,_,_ = rhs_IDP(resW,K,N,wq,S,S0,Mlump_inv,dt)
+    #rhsU = rhs_high(resW,K,N,Mlump_inv,S)
     @. resZ = resW+dt*rhsU
     @. resW = 3/4*U+1/4*resZ
-    rhsU,L_plot,L_plot2 = rhs_IDP(resW,K,N,wq,S,S0,Mlump_inv,dt)
+    rhsU,_,_ = rhs_IDP(resW,K,N,wq,S,S0,Mlump_inv,dt)
+    #rhsU = rhs_high(resW,K,N,Mlump_inv,S)
     @. resZ = resW+dt*rhsU
     @. U = 1/3*U+2/3*resZ
-
-    # rhsU = rhs_IDPlow(U,K,N,Mlump_inv)
-    # @. resW = U + dt*rhsU
-    # rhsU = rhs_IDPlow(U,K,N,Mlump_inv)
-    # @. resZ = resW+dt*rhsU
-    # @. resW = 3/4*U+1/4*resZ
-    # rhsU = rhs_IDPlow(U,K,N,Mlump_inv)
-    # @. resZ = resW+dt*rhsU
-    # @. U = 1/3*U+2/3*resZ
-
-
 
     global t = t + dt
     println("Current time $t with time step size $dt, and final time $T")  
     if t == T
         break
     end
-    # if i % GIFINTERVAL == 0  
-    #     plot(Vp*x,Vp*U[1])
-    #     # # plot(Vp*x,Vp*U[3])
-    #     # plot!(Bl+(Br-Bl)/K/2:(Br-Bl)/K:Br-(Br-Bl)/K/2,1 .-L_plot/N/(N+1),st=:bar,alpha=.2)
-    #     ptL = Bl+(Br-Bl)/K/(N+1)/2
-    #     ptR = Br-(Br-Bl)/K/(N+1)/2
-    #     hplot = (Br-Bl)/K/(N+1)
-    #     for k = 1:K
-    #         plot!(ptL+(k-1)*hplot*(N+1):hplot:ptL+k*hplot*(N+1), 1 .-L_plot2[:,k],st=:bar,alpha=0.2)
-    #     end
-    #     # #plot!(Bl+(Br-Bl)/K/(N+1)/2:(Br-Bl)/K/(N+1):Br-(Br-Bl)/K/(N+1)/2,1 .-L_plot2[:],st=:bar,alpha=.2)
-    # end
-#end every GIFINTERVAL
-end
+
+    if i % GIFINTERVAL == 0  
+        plot(Vp*x,Vp*U[1])
+        ptL = Bl+(Br-Bl)/K/(N+1)/2
+        ptR = Br-(Br-Bl)/K/(N+1)/2
+        hplot = (Br-Bl)/K/(N+1)
+        for k = 1:K
+            plot!(ptL+(k-1)*hplot*(N+1):hplot:ptL+k*hplot*(N+1), 1 .-L_plot2[:,k],st=:bar,alpha=0.2)
+        end
+    end
+end every GIFINTERVAL
+#end
 
 
 
 
 
 
-exact_sol = @. exact_sol_Leblanc(x,T)
-exact_rho = [x[1] for x in exact_sol]
-exact_u = [x[2] for x in exact_sol]
-exact_p = [x[3] for x in exact_sol]
+exact_U = @. exact_sol(x,T)
+exact_rho = [x[1] for x in exact_U]
+exact_u = [x[2] for x in exact_U]
+exact_p = [x[3] for x in exact_U]
 
 rho = U[1]
 u = U[2]./U[1]
 p = pfun_nd.(U[1],U[2],U[3])
 J = (Br-Bl)/K/2
-@show maximum(abs.(exact_rho-rho))
-@show maximum(abs.(exact_u-u))
-@show maximum(abs.(exact_p-p))
 
-@show sum(J*abs.(exact_rho-rho))
-@show sum(J*abs.(exact_u-u))
-@show sum(J*abs.(exact_p-p))
+Linferr = maximum(abs.(exact_rho-rho))/maximum(abs.(rho)) + 
+          maximum(abs.(exact_u-u))/maximum(abs.(u)) + 
+          maximum(abs.(exact_p-p))/maximum(abs.(p)) 
+
+L1err = sum(J*abs.(exact_rho-rho))/sum(J*abs.(rho)) + 
+        sum(J*abs.(exact_u-u))/sum(J*abs.(u)) + 
+        sum(J*abs.(exact_p-p))/sum(J*abs.(p)) 
+println("N = $N, K = $K")
+println("L1 error is $L1err")
+println("Linf error is $Linferr")
+
+# open("convergence.txt", "a") do io
+#     write(io, "N = $N, K = $K\n")
+#     write(io, "L1 error is $L1err\n")
+#     write(io, "Linf error is $Linferr\n")
+# end
 
 plot(Vp*x,Vp*U[1])
+savefig("~/Desktop/N=$N,K=$K,dt=$dt,modifiedESDG.png")
