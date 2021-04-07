@@ -285,12 +285,14 @@ function rhs_viscous(U,K,N,Mlump_inv,S)
         # Construct sigma
         for i = 1:N+1
             Kx = zeros(3,3)
-            Kx[2,2] = 4/3*mu*cv*T[i,k]
-            Kx[3,2] = 4/3*mu*cv*T[i,k]*U[2][i,k]/U[1][i,k]
-            Kx[3,3] = kappa*cv*T[i,k]^2
-
-            sigma[2][i,k] = Kx[2,2]*theta[2][i,k]
-            sigma[3][i,k] = Kx[3,2]*theta[2][i,k] + Kx[3,3]*theta[3][i,k]
+            Kx[2,2] = (lambda-2*mu)*VU[3][i]^2
+            Kx[2,3] = (lambda+2*mu)*VU[2][i]*VU[3][i]
+            Kx[3,2] = Kx[2,3]
+            Kx[3,3] = (lambda+2*mu)*VU[2][i]^2-γ*mu*VU[3][i]/Pr
+            Kx = 1/VU[3][i]^3*Kx
+        
+            sigma[2][i] = Kx[2,2]*theta[2][i] + Kx[2,3]*theta[3][i]
+            sigma[3][i] = Kx[3,2]*theta[2][i] + Kx[3,3]*theta[3][i]
         end
 
         # Constuct rhs
@@ -391,12 +393,14 @@ function rhs_low_viscous(U,K,N,Qr)
         # Construct sigma
         for i = 1:N+1
             Kx = zeros(3,3)
-            Kx[2,2] = 4/3*mu*cv*T[i,k]
-            Kx[3,2] = 4/3*mu*cv*T[i,k]*U[2][i,k]/U[1][i,k]
-            Kx[3,3] = kappa*cv*T[i,k]^2
-
-            sigma[2][i,k] = Kx[2,2]*theta[2][i,k]
-            sigma[3][i,k] = Kx[3,2]*theta[2][i,k] + Kx[3,3]*theta[3][i,k]
+            Kx[2,2] = (lambda-2*mu)*VU[3][i]^2
+            Kx[2,3] = (lambda+2*mu)*VU[2][i]*VU[3][i]
+            Kx[3,2] = Kx[2,3]
+            Kx[3,3] = (lambda+2*mu)*VU[2][i]^2-γ*mu*VU[3][i]/Pr
+            Kx = 1/VU[3][i]^3*Kx
+        
+            sigma[2][i] = Kx[2,2]*theta[2][i] + Kx[2,3]*theta[3][i]
+            sigma[3][i] = Kx[3,2]*theta[2][i] + Kx[3,3]*theta[3][i]
         end
 
         # Constuct rhs

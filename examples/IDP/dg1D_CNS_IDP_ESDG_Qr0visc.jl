@@ -62,14 +62,36 @@ function euler_fluxes(rhoL,uL,betaL,rhoR,uR,betaR)
                            rhoR,uR,betaR,rhologR,betalogR)
 end
 
+function exact_sol_Leblanc(x,t)
+    xi = (x-0.33)/t
+    rhoLstar = 5.4079335349316249*1e-2
+    rhoRstar = 3.9999980604299963*1e-3
+    vstar    = 0.62183867139173454
+    pstar    = 0.51557792765096996*1e-3
+    lambda1  = 0.49578489518897934
+    lambda3  = 0.82911836253346982
+    if xi <= -1/3
+        return rhoL, 0.0, pL
+    elseif xi <= lambda1
+        return (0.75-0.75*xi)^3, 0.75*(1/3+xi), 1/15*(0.75-0.75*xi)^5
+    elseif xi <= vstar
+        return rhoLstar, vstar, pstar
+    elseif xi <= lambda3
+        return rhoRstar, vstar, pstar
+    else
+        return rhoR, 0.0, pR
+    end
+end
+
 
 
 const TOL = 1e-16
 "Approximation parameters"
-N = 8 # The order of approximation
-K = 10
+N = 2 # The order of approximation
+K = 200
 T = 1.0
 T = 6.0
+t0 = 0.1
 #T = 0.0039
 
 # # Sod shocktube
@@ -83,23 +105,48 @@ T = 6.0
 # const xC = 0.0
 # const GIFINTERVAL = 20
 # T = 0.2
+# t0 = 0.0
 
-# Leblanc shocktube
+# # Leblanc shocktube
+# const γ = 5/3
+# const Bl = 0.0
+# const Br = 9.0
+# const rhoL = 1.0
+# const rhoR = 0.001
+# const pL = 0.1
+# const pR = 1e-7
+# #const pR = 1e-15
+# const xC = 3.0
+# const GIFINTERVAL = 30000
+# #const GIFINTERVAL = 3000
+# T = 6.0
+
+# # Ignacio - Leblanc shocktube
+# const γ = 5/3
+# const Bl = 0.0
+# const Br = 1.0
+# const rhoL = 1.0
+# const rhoR = 1e-3
+# const pL = (γ-1)*1e-1
+# const pR = (γ-1)*1e-10
+# const xC = 0.33
+# T = 2/3
+
+# Ignacio - Leblanc shocktube 2 
 const γ = 5/3
 const Bl = 0.0
-const Br = 9.0
+const Br = 1.0
 const rhoL = 1.0
-const rhoR = 0.001
-const pL = 0.1
-const pR = 1e-7
-#const pR = 1e-15
-const xC = 3.0
-const GIFINTERVAL = 30000
-#const GIFINTERVAL = 3000
-T = 6.0
+const rhoR = 1e-3
+const pL = (γ-1)*1e-1
+const pR = (γ-1)*1e-7
+const xC = 0.33
+T = 2/3
+t0 = 0.1
+exact_sol = exact_sol_Leblanc
 
 "Viscous parameters"
-const Re = 1000
+const Re = 10000
 const Ma = 0.3
 const mu = 1/Re
 const lambda = -2/3*mu
@@ -186,10 +233,20 @@ rho_x(x) = (x <= xC) ? rhoL : rhoR
 u_x(x) = 0.0
 p_x(x) = (x <= xC) ? pL : pR 
 
-rho = @. rho_x(x)
-u = @. u_x(x)
-p = @. p_x(x)
-U = primitive_to_conservative_hardcode(rho,u,p)
+# rho = @. rho_x(x)
+# u = @. u_x(x)
+# p = @. p_x(x)
+# U = primitive_to_conservative_hardcode(rho,u,p)
+
+U_init = @. exact_sol(x,t0)
+rho_init = [x[1] for x in U_init]
+u_init = [x[2] for x in U_init]
+p_init = [x[3] for x in U_init]
+U = primitive_to_conservative_hardcode.(rho_init,u_init,p_init)
+rho = [x[1] for x in U]
+rhou = [x[2] for x in U]
+E = [x[3] for x in U]
+U = (rho,rhou,E)
 
 function rhs_inviscid(U,K,N,Mlump_inv,S)
     J = (Br-Bl)/K/2 # assume uniform interval
@@ -285,12 +342,14 @@ function rhs_viscous(U,K,N,Mlump_inv,S)
         # Construct sigma
         for i = 1:N+1
             Kx = zeros(3,3)
-            Kx[2,2] = 4/3*mu*cv*T[i,k]
-            Kx[3,2] = 4/3*mu*cv*T[i,k]*U[2][i,k]/U[1][i,k]
-            Kx[3,3] = kappa*cv*T[i,k]^2
-
-            sigma[2][i,k] = Kx[2,2]*theta[2][i,k]
-            sigma[3][i,k] = Kx[3,2]*theta[2][i,k] + Kx[3,3]*theta[3][i,k]
+            Kx[2,2] = (lambda-2*mu)*VU[3][i]^2
+            Kx[2,3] = (lambda+2*mu)*VU[2][i]*VU[3][i]
+            Kx[3,2] = Kx[2,3]
+            Kx[3,3] = (lambda+2*mu)*VU[2][i]^2-γ*mu*VU[3][i]/Pr
+            Kx = 1/VU[3][i]^3*Kx
+        
+            sigma[2][i] = Kx[2,2]*theta[2][i] + Kx[2,3]*theta[3][i]
+            sigma[3][i] = Kx[3,2]*theta[2][i] + Kx[3,3]*theta[3][i]
         end
 
         # Constuct rhs
@@ -391,12 +450,14 @@ function rhs_low_viscous(U,K,N,Qr0)
         # Construct sigma
         for i = 1:N+1
             Kx = zeros(3,3)
-            Kx[2,2] = 4/3*mu*cv*T[i,k]
-            Kx[3,2] = 4/3*mu*cv*T[i,k]*U[2][i,k]/U[1][i,k]
-            Kx[3,3] = kappa*cv*T[i,k]^2
-
-            sigma[2][i,k] = Kx[2,2]*theta[2][i,k]
-            sigma[3][i,k] = Kx[3,2]*theta[2][i,k] + Kx[3,3]*theta[3][i,k]
+            Kx[2,2] = (lambda-2*mu)*VU[3][i]^2
+            Kx[2,3] = (lambda+2*mu)*VU[2][i]*VU[3][i]
+            Kx[3,2] = Kx[2,3]
+            Kx[3,3] = (lambda+2*mu)*VU[2][i]^2-γ*mu*VU[3][i]/Pr
+            Kx = 1/VU[3][i]^3*Kx
+        
+            sigma[2][i] = Kx[2,2]*theta[2][i] + Kx[2,3]*theta[3][i]
+            sigma[3][i] = Kx[3,2]*theta[2][i] + Kx[3,3]*theta[3][i]
         end
 
         # Constuct rhs
@@ -436,7 +497,7 @@ function construct_artificial_wavespd(rhoL,mL,EL,rhoR,mR,ER,F1,F2,F3)
     end
 end
 
-function rhs_low_graph_visc(U,K,N,sigma,S0,S)
+function rhs_low_graph_visc(U,K,N,sigma,S0,S,wq)
     Nc = 3
     p = pfun_nd.(U[1],U[2],U[3])
     flux = zero.(U)
@@ -452,23 +513,22 @@ function rhs_low_graph_visc(U,K,N,sigma,S0,S)
         end
     end
 
+    dt = Inf
+    d_ii_arr = zeros(N+1,K)
     # Graph viscosity
     for k = 1:K
         for j = 1:N+1
             for i = 1:N+1
                 if i != j
-                    # F1 = (sigma[1][i,k]+sigma[1][j,k])/2
-                    # F2 = (sigma[2][i,k]+sigma[2][j,k])/2
-                    # F3 = (sigma[3][i,k]+sigma[3][j,k])/2
                     F1 = S0[i,j]*(flux[1][i,k]+flux[1][j,k])-S0[i,j]*(sigma[1][i,k]+sigma[1][j,k])
                     F2 = S0[i,j]*(flux[2][i,k]+flux[2][j,k])-S0[i,j]*(sigma[2][i,k]+sigma[2][j,k])
                     F3 = S0[i,j]*(flux[3][i,k]+flux[3][j,k])-S0[i,j]*(sigma[3][i,k]+sigma[3][j,k])
                     wavespd = construct_artificial_wavespd(U[1][i,k],U[2][i,k],U[3][i,k],U[1][j,k],U[2][j,k],U[3][j,k],F1,F2,F3)
-                    # wavespd = max(wavespd_arr[i,k],wavespd_arr[j,k])
+                    # wavespd = 1/2*max(wavespd_arr[i,k],wavespd_arr[j,k]) 
                     for c = 1:Nc
-                        # graph_visc[c][i,k] += wavespd*abs(S0[i,j])*(U[c][j,k]-U[c][i,k])
                         graph_visc[c][i,k] += wavespd*(U[c][j,k]-U[c][i,k])
                     end
+                    d_ii_arr[i,k] += wavespd
                 end
             end
         end
@@ -480,80 +540,109 @@ function rhs_low_graph_visc(U,K,N,sigma,S0,S)
         sigma_right = (k == K) ? [sigma[1][end,k];sigma[2][end,k];sigma[3][end,k]] : [sigma[1][1,k+1]; sigma[2][1,k+1]; sigma[3][1,k+1]] 
         f_left   = (k == 1) ? [0.0; pL; 0.0]           : [flux[1][end,k-1]; flux[2][end,k-1]; flux[3][end,k-1]]
         f_right  = (k == K) ? [0.0; pR; 0.0]           : [flux[1][1,k+1]; flux[2][1,k+1]; flux[3][1,k+1]]
-        # wavespd_l = max(wavespd_arr[1,k],wavespeed_1D(U_left[1],U_left[2],U_left[3]))
-        # wavespd_r = max(wavespd_arr[end,k],wavespeed_1D(U_right[1],U_right[2],U_right[3]))
-        # F1 = (sigma[1][1,k]+sigma_left[2])/2
-        # F2 = (sigma[2][1,k]+sigma_left[2])/2
-        # F3 = (sigma[3][1,k]+sigma_left[3])/2
         F1 = -1/2*(flux[1][1,k]+f_left[1])+1/2*(sigma[1][1,k]+sigma_left[1])
         F2 = -1/2*(flux[2][1,k]+f_left[2])+1/2*(sigma[2][1,k]+sigma_left[2])
         F3 = -1/2*(flux[3][1,k]+f_left[3])+1/2*(sigma[3][1,k]+sigma_left[3])
         wavespd_l = construct_artificial_wavespd(U_left[1],U_left[2],U_left[3],U[1][1,k],U[2][1,k],U[3][1,k],F1,F2,F3)
-        # F1 = (sigma[1][end,k]+sigma_right[2])/2
-        # F2 = (sigma[2][end,k]+sigma_right[2])/2
-        # F3 = (sigma[3][end,k]+sigma_right[3])/2
         F1 = 1/2*(flux[1][end,k]+f_right[1])-1/2*(sigma[1][end,k]+sigma_right[1])
         F2 = 1/2*(flux[2][end,k]+f_right[2])-1/2*(sigma[2][end,k]+sigma_right[2])
         F3 = 1/2*(flux[3][end,k]+f_right[3])-1/2*(sigma[3][end,k]+sigma_right[3])
         wavespd_r = construct_artificial_wavespd(U_right[1],U_right[2],U_right[3],U[1][end,k],U[2][end,k],U[3][end,k],F1,F2,F3)
 
+        # wavespd_l = 1/2*max(wavespd_arr[1,k],wavespeed_1D(U_left[1],U_left[2],U_left[3]))
+        # wavespd_r = 1/2*max(wavespd_arr[end,k],wavespeed_1D(U_right[1],U_right[2],U_right[3]))
+
         for c = 1:Nc
-            # graph_visc[c][1,k] += wavespd_l/2*(U_left[c]-U[c][1,k])
-            # graph_visc[c][end,k] += wavespd_r/2*(U_right[c]-U[c][end,k])
             graph_visc[c][1,k] += wavespd_l*(U_left[c]-U[c][1,k])
             graph_visc[c][end,k] += wavespd_r*(U_right[c]-U[c][end,k])
         end
+        d_ii_arr[1,k] += wavespd_l
+        d_ii_arr[end,k] += wavespd_r
     end
+
+    J = (Br-Bl)/K/2
+    dt = minimum(J*wq./d_ii_arr./2.0)
     
-    return graph_visc
+    return graph_visc,dt
 end
 
-
-
-function rhs_low(U,K,N,Mlump_inv,S0,S)
+function rhs_low(U,K,N,Mlump_inv,S0,S,wq)
     J = (Br-Bl)/K/2 # assume uniform interval
     Nc = 3
     rhsU = [zeros(N+1,K) for i = 1:Nc]
     rhsI = rhs_low_inviscid(U,K,N,S0)
     rhsV,sigma = rhs_low_viscous(U,K,N,Qr0)
-    graph_visc = rhs_low_graph_visc(U,K,N,sigma,S0,S)
+    graph_visc,dt = rhs_low_graph_visc(U,K,N,sigma,S0,S,wq)
 
     for k = 1:K
         for c = 1:Nc
             rhsU[c][:,k] = -1/J*Mlump_inv*(rhsI[c][:,k]-graph_visc[c][:,k]-rhsV[c][:,k])
             #rhsU[c][:,k] = -1/J*Mlump_inv*(rhsI[c][:,k]-rhsV[c][:,k])
+            #rhsU[c][:,k] = -1/J*Mlump_inv*(rhsI[c][:,k]-graph_visc[c][:,k])
         end
     end
 
-    return rhsU
+    return rhsU,dt
 end
 
 
 # Time stepping
 "Time integration"
-t = 0.0
+t = t0
 U = collect(U)
 resU = [zeros(size(x)),zeros(size(x)),zeros(size(x))]
+resW = [zeros(size(x)),zeros(size(x)),zeros(size(x))]
+resZ = [zeros(size(x)),zeros(size(x)),zeros(size(x))]
 
 Vp = vandermonde_1D(N,LinRange(-1,1,10))/VDM
 gr(size=(300,300),ylims=(0,1.2),legend=false,markerstrokewidth=1,markersize=2)
 plot()
 
-dt = 0.000005 # Leblanc
-#dt = 0.000001
-#dt = 0.0001 # Sod
-Nsteps = Int(T/dt)
-@gif for i = 1:Nsteps
+#dt = 0.00000001 # Leblanc
+#dt = 0.000001 # Sod
+#Nsteps = Int(ceil(T/dt))
+#@gif for i = 1:Nsteps
+
+anim = Animation()
+i = 1
+while t < T
+
+    # if abs(T-t) < dt
+    #     global dt = T - t
+    # end
+
     #rhsU = rhs_inviscid(U,K,N,Mlump_inv,S)
     #rhsU = rhs_ESDG(U,K,N,Mlump_inv,S)
-    #rhsU = rhs_low_inviscid(U,K,N,Mlump_inv,S0)
-    rhsU = rhs_low(U,K,N,Mlump_inv,S0,S)
-    @. U = U + dt*rhsU
+    # rhsU,dt = rhs_low(U,K,N,Mlump_inv,S0,S,wq)
+
+    # dt = min(0.001*dt, T-t)
+    # @. U = U + dt*rhsU
+
+    # SSPRK(3,3)
+    rhsU,dt = rhs_low(U,K,N,Mlump_inv,S0,S,wq)
+    #dt = min(dt,T-t)
+    dt = min(0.001*dt,T-t)
+    @. resW = U + dt*rhsU
+    rhsU,_ = rhs_low(resW,K,N,Mlump_inv,S0,S,wq)
+    @. resZ = resW+dt*rhsU
+    @. resW = 3/4*U+1/4*resZ
+    rhsU,_ = rhs_low(resW,K,N,Mlump_inv,S0,S,wq)
+    @. resZ = resW+dt*rhsU
+    @. U = 1/3*U+2/3*resZ
+
+
     global t = t + dt
+    global i = i + 1
     println("Current time $t with time step size $dt, and final time $T")  
-    if i % GIFINTERVAL == 0  
+    if mod(i,100) == 1
         plot(Vp*x,Vp*U[1])
+        frame(anim)
     end
-end every GIFINTERVAL
+    # if i % GIFINTERVAL == 0  
+    #     plot(Vp*x,Vp*U[1])
+    # end
+end
+#end every GIFINTERVAL
 
 #plot(Vp*x,Vp*U[1])
+gif(anim,"~/Desktop/tmp.gif",fps=15)
