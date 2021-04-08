@@ -66,16 +66,16 @@ end
 
 const TOL = 1e-16
 "Approximation parameters"
-N = 4 # The order of approximation
-K = 1000
+N = 2 # The order of approximation
+K = 1600
 t0 = 0.1
-gr(size=(300,300),ylims=(0,1.2),legend=false,markerstrokewidth=1,markersize=2)
+gr(size=(300,300),ylims=(-0.2,1.2),legend=false,markerstrokewidth=1,markersize=2,showaxis=false)
 plot()
 #gr(size=(300,300),ylims=(0,3.5),legend=false,markerstrokewidth=1,markersize=2)
 #dt = 0.001
 #dt = 0.005
 #dt = 0.0001
-dt = 0.00001
+dt = 0.0003
 
 function exact_sol_Leblanc(x,t)
     xi = (x-0.33)/t
@@ -147,19 +147,19 @@ end
 # T = 0.2
 # t0 = 0.0
 
-# Sod shocktube 3
-const γ = 1.4
-const Bl = -0.5
-const Br = 0.5
-const rhoL = 1.0
-const rhoR = 0.05
-const pL = 1.0
-const pR = 0.04
-const uL = 0.0
-const uR = 0.0
-const xC = 0.0
-T = 0.2
-t0 = 0.0
+# # Sod shocktube 3
+# const γ = 1.4
+# const Bl = -0.5
+# const Br = 0.5
+# const rhoL = 1.0
+# const rhoR = 0.05
+# const pL = 1.0
+# const pR = 0.04
+# const uL = 0.0
+# const uR = 0.0
+# const xC = 0.0
+# T = 0.2
+# t0 = 0.0
 
 # # Leblanc shocktube
 # const γ = 5/3
@@ -188,6 +188,19 @@ t0 = 0.0
 # const xC = 0.33
 # T = 2/3
 # exact_sol = exact_sol_Leblanc
+
+
+# Ignacio - Leblanc shocktube 2
+const γ = 5/3
+const Bl = 0.0
+const Br = 1.0
+const rhoL = 1.0
+const rhoR = 1e-3
+const pL = (γ-1)*1e-1
+const pR = (γ-1)*1e-7
+const xC = 0.33
+T = 2/3
+exact_sol = exact_sol_Leblanc
 
 
 
@@ -288,20 +301,20 @@ u_x(x) = 0.0
 p_x(x) = (x <= xC) ? pL : pR 
 
 
-rho = @. rho_x(x)
-u = @. u_x(x)
-p = @. p_x(x)
-U = primitive_to_conservative_hardcode(rho,u,p)
+# rho = @. rho_x(x)
+# u = @. u_x(x)
+# p = @. p_x(x)
+# U = primitive_to_conservative_hardcode(rho,u,p)
 
-# U_init = @. exact_sol(x,t0)
-# rho_init = [x[1] for x in U_init]
-# u_init = [x[2] for x in U_init]
-# p_init = [x[3] for x in U_init]
-# U = primitive_to_conservative_hardcode.(rho_init,u_init,p_init)
-# rho = [x[1] for x in U]
-# rhou = [x[2] for x in U]
-# E = [x[3] for x in U]
-# U = (rho,rhou,E)
+U_init = @. exact_sol(x,t0)
+rho_init = [x[1] for x in U_init]
+u_init = [x[2] for x in U_init]
+p_init = [x[3] for x in U_init]
+U = primitive_to_conservative_hardcode.(rho_init,u_init,p_init)
+rho = [x[1] for x in U]
+rhou = [x[2] for x in U]
+E = [x[3] for x in U]
+U = (rho,rhou,E)
 
 function limiting_param(U_low, P_ij)
     l = 1.0
@@ -511,7 +524,7 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,dt)
     return rhsU,L_plot,L_plot2
 end
 
-function rhs_IDPlow(U,K,N,Mlump_inv)
+function rhs_IDPlow(U,K,N,Mlump_inv,wq)
     p = pfun_nd.(U[1],U[2],U[3])
     flux = zero.(U)
     @. flux[1] = U[2]
@@ -520,6 +533,8 @@ function rhs_IDPlow(U,K,N,Mlump_inv)
 
     J = (Br-Bl)/K/2
 
+    dt = Inf
+    d_ii_arr = zeros(N+1,K)
     dfdx = (zeros(N+1,K),zeros(N+1,K),zeros(N+1,K))
     for i = 2:K*(N+1)-1
         for c = 1:3
@@ -543,6 +558,7 @@ function rhs_IDPlow(U,K,N,Mlump_inv)
         for c = 1:3
             visc[c][i] = dL*(U[c][mod1(i-1,K*(N+1))]-U[c][i]) + dR*(U[c][mod1(i+1,K*(N+1))]-U[c][i])
         end
+        d_ii_arr[i] += max(wavespd_curr,wavespd_L) + max(wavespd_curr,wavespd_R)
     end
 
     # i = 1
@@ -555,6 +571,8 @@ function rhs_IDPlow(U,K,N,Mlump_inv)
     visc[2][1] = dL*(0.0-U[2][1]) + dR*(U[2][2]-U[2][1])
     visc[3][1] = dL*(pL/(γ-1)-U[3][1]) + dR*(U[3][2]-U[3][1])
 
+    d_ii_arr[1] += 2*(dL+dR)
+
     # i = end
     wavespd_curr = wavespeed_1D(U[1][end],U[2][end],U[3][end])
     wavespd_R = wavespeed_1D(rhoR,0.0,pR/(γ-1))
@@ -564,9 +582,12 @@ function rhs_IDPlow(U,K,N,Mlump_inv)
     visc[1][end] = dL*(U[1][end-1]-U[1][end]) + dR*(rhoR-U[1][end])
     visc[2][end] = dL*(U[2][end-1]-U[2][end]) + dR*(0.0-U[2][end])
     visc[3][end] = dL*(U[3][end-1]-U[3][end]) + dR*(pR/(γ-1)-U[3][end])
-    
+
+    d_ii_arr[end] += 2*(dL+dR)
+    dt = minimum(J*wq./d_ii_arr./2.0)
+
     rhsU = (x->1/J*Mlump_inv*x).(.-dfdx.+visc)
-    return rhsU
+    return rhsU,dt
 end
 
 function rhs_high(U,K,N,Mlump_inv,S)
@@ -661,22 +682,27 @@ Nsteps = Int(ceil((T-t0)/dt))
 resW = [zeros(size(x)),zeros(size(x)),zeros(size(x))]
 resZ = [zeros(size(x)),zeros(size(x)),zeros(size(x))]
 #for i = 1:Nsteps
-@gif for i = 1:Nsteps
+#@gif for i = 1:Nsteps
+while t < T
 
-    if abs(T-t) < dt
-        global dt = T - t
-    end
+    # if abs(T-t) < dt
+    #     global dt = T - t
+    # end
 
     # SSPRK(3,3)
-    rhsU,L_plot,L_plot2 = rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,dt)
+    #rhsU,L_plot,L_plot2 = rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,dt)
     #rhsU = rhs_high(U,K,N,Mlump_inv,S)
+    rhsU,dt = rhs_IDPlow(U,K,N,Mlump_inv,wq)
+    dt = min(dt,T-t)
     @. resW = U + dt*rhsU
-    rhsU,_,_ = rhs_IDP(resW,K,N,wq,S,S0,Mlump_inv,dt)
+    #rhsU,_,_ = rhs_IDP(resW,K,N,wq,S,S0,Mlump_inv,dt)
     #rhsU = rhs_high(resW,K,N,Mlump_inv,S)
+    rhsU,_ = rhs_IDPlow(resW,K,N,Mlump_inv,wq)
     @. resZ = resW+dt*rhsU
     @. resW = 3/4*U+1/4*resZ
-    rhsU,_,_ = rhs_IDP(resW,K,N,wq,S,S0,Mlump_inv,dt)
+    #rhsU,_,_ = rhs_IDP(resW,K,N,wq,S,S0,Mlump_inv,dt)
     #rhsU = rhs_high(resW,K,N,Mlump_inv,S)
+    rhsU,_ = rhs_IDPlow(resW,K,N,Mlump_inv,wq)
     @. resZ = resW+dt*rhsU
     @. U = 1/3*U+2/3*resZ
 
@@ -686,17 +712,22 @@ resZ = [zeros(size(x)),zeros(size(x)),zeros(size(x))]
         break
     end
 
-    if i % GIFINTERVAL == 0  
-        plot(Vp*x,Vp*U[1])
-        ptL = Bl+(Br-Bl)/K/(N+1)/2
-        ptR = Br-(Br-Bl)/K/(N+1)/2
-        hplot = (Br-Bl)/K/(N+1)
-        for k = 1:K
-            plot!(ptL+(k-1)*hplot*(N+1):hplot:ptL+k*hplot*(N+1), 1 .-L_plot2[:,k],st=:bar,alpha=0.2)
-        end
-    end
-end every GIFINTERVAL
+    # if i % GIFINTERVAL == 0  
+    #     #plot(Vp*x,Vp*U[1])
+    #     plot(Vp*x,Vp*U[1])
+    #     # ptL = Bl+(Br-Bl)/K/(N+1)/2
+    #     # ptR = Br-(Br-Bl)/K/(N+1)/2
+    #     # hplot = (Br-Bl)/K/(N+1)
+    #     # for k = 1:K
+    #     #     plot!(ptL+(k-1)*hplot*(N+1):hplot:ptL+k*hplot*(N+1), 1 .-L_plot2[:,k],st=:bar,alpha=0.2)
+    #     # end
+    # end
+end
+#end every GIFINTERVAL
 #end
+
+plot(Vp*x,Vp*U[1])
+
 
 
 
@@ -731,4 +762,4 @@ println("Linf error is $Linferr")
 # end
 
 plot(Vp*x,Vp*U[1])
-savefig("~/Desktop/N=$N,K=$K,dt=$dt,modifiedESDG.png")
+#savefig("~/Desktop/N=$N,K=$K,dt=$dt,modifiedESDG.png")
