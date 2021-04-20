@@ -174,6 +174,9 @@ for i = 1:Nq+1
     Mlump[i,i] = sum(M[i,:])
     Mlump_inv[i,i] = 1.0/Mlump[i,i]
 end
+rf = [-1.0;1.0]
+nrJ = [-1.0;1.0]
+Vf = vandermonde_1D(N,rf)/VDM
 LIFT = Mlump_inv*Vf'
 
 # operators
@@ -203,9 +206,6 @@ L = Matrix(droptol!(sparse(L),TOL))
 S0 = Matrix(droptol!(sparse(S0),TOL))
 S = Matrix(droptol!(sparse((Qr-Qr')/2),TOL))
 
-rf = [-1.0;1.0]
-nrJ = [-1.0;1.0]
-Vf = vandermonde_1D(N,rf)/VDM
 
 """High order mesh"""
 x = V1*VX[transpose(EToV)]
@@ -340,74 +340,6 @@ function rhs_inviscid(U,K,N,Mlump_inv,S)
 end
 
 function rhs_viscous(U,K,N,Mlump_inv,S)
-    # J = (Br-Bl)/K/2 # assume uniform interval
-    # Nc = 3
-    # rhsU  = [zeros(N+1,K) for i = 1:Nc]
-    # theta = [zeros(N+1,K) for i = 1:Nc]
-    # sigma = [zeros(N+1,K) for i = 1:Nc]
-
-    # p = pfun_nd.(U[1],U[2],U[3])
-
-    # VU = v_ufun(U...)
-
-
-    # for k = 1:K
-    #     # Construct theta \approx dv/dx 
-    #     # Volume term
-    #     for c = 1:Nc
-    #         theta[c][:,k] = Qr*VU[c][:,k]
-    #     end
-
-    #     # Surface term (numerical fluxes)
-    #     VU_left  = (k == 1) ? [v_ufun(rhoL,rhoL*uL,EL)...] : [VU[1][end,k-1]; VU[2][end,k-1]; VU[3][end,k-1]]
-    #     VU_right = (k == K) ? [v_ufun(rhoR,rhoR*uR,ER)...] : [VU[1][1,k+1]; VU[2][1,k+1]; VU[3][1,k+1]]
-    #     for c = 1:Nc
-    #         theta[c][1,k] -= 1/2*(VU_left[c]-VU[c][1,k])
-    #         theta[c][end,k] += 1/2*(VU_right[c]-VU[c][end,k])
-    #         theta[c][:,k] = 1/J*Mlump_inv*theta[c][:,k]
-    #     end
-
-    #     # Construct sigma
-    #     for i = 1:N+1
-    #         Kx = zeros(3,3)
-    #         # Kx[2,2] = -(lambda+2*mu)*VU[3][i,k]^2
-    #         # Kx[2,3] = (lambda+2*mu)*VU[2][i,k]*VU[3][i,k]
-    #         # Kx[3,2] = Kx[2,3]
-    #         # Kx[3,3] = -((lambda+2*mu)*VU[2][i,k]^2-γ*mu*VU[3][i,k]/Pr)
-    #         # Kx = 1/VU[3][i,k]^3*Kx
-    #         v1 = VU[1][i,k]
-    #         v2 = VU[2][i,k]
-    #         v4 = VU[3][i,k]
-    #         Kx[2,2] = -(2*mu-lambda)/v4
-    #         Kx[2,3] = (2*mu-lambda)*v2/v4^2
-    #         Kx[3,2] = Kx[2,3]
-    #         Kx[3,3] = -(2*mu-lambda)*v2^2/v4^3+kappa/cv/v4^2
-        
-    #         sigma[2][i,k] += Kx[2,2]*theta[2][i,k] + Kx[2,3]*theta[3][i,k]
-    #         sigma[3][i,k] += Kx[3,2]*theta[2][i,k] + Kx[3,3]*theta[3][i,k]
-    #     end
-
-    #     # Constuct rhs
-    #     # Volume term
-    #     for c = 1:Nc
-    #         rhsU[c][:,k] = Qr*sigma[c][:,k]
-    #     end
-
-    #     # Surface term (numerical fluxes)
-    #     # TODO: how to enforce BC?
-    #     sigma_left  = (k == 1) ? [sigma[1][1,k];sigma[2][1,k];sigma[3][1,k]] : [sigma[1][end,k-1]; sigma[2][end,k-1]; sigma[3][end,k-1]]
-    #     sigma_right = (k == K) ? [sigma[1][end,k];sigma[2][end,k];sigma[3][end,k]] : [sigma[1][1,k+1]; sigma[2][1,k+1]; sigma[3][1,k+1]]
-
-    #     for c = 1:Nc
-    #         rhsU[c][1,k] -= 1/2*(sigma_left[c]-sigma[c][1,k]) #- 1/2*(VU_left[c]-VU[c][1,k])
-    #         rhsU[c][end,k] += 1/2*(sigma_right[c]-sigma[c][end,k]) #- 1/2*(VU_right[c]-VU[c][end,k])
-    #         rhsU[c][:,k] = 1/J*Mlump_inv*rhsU[c][:,k]
-    #     end
-
-    # end
-
-    # return rhsU
-
     J = (Br-Bl)/K/2 # assume uniform interval
     Nc = 3
     rhsU  = [zeros(N+1,K) for i = 1:Nc]
