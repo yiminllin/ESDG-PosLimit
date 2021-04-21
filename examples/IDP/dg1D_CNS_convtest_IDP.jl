@@ -66,7 +66,7 @@ const TOL = 1e-16
 "Approximation parameters"
 N = 2 # The order of approximation
 K = 100
-T = 0.5#3.0
+T = 3.0
 
 # Becker viscous shocktube
 const γ = 1.4
@@ -101,58 +101,33 @@ const Br = 1.5
 gr(size=(300,300),ylims=(0,5.0),legend=false,markerstrokewidth=1,markersize=2)
 plot()
 
-# # Sod tube
+
+# # Sod shocktube
 # const γ = 1.4
+# const Bl = -0.5
+# const Br = 0.5
 # const rhoL = 1.0
 # const rhoR = 0.125
-# const uL = 0.0
-# const uR = 0.0
 # const pL = 1.0
 # const pR = 0.1
+# const uL = 0.0
+# const ur = 0.0
+# const xC = 0.0
 # const EL = pL/(γ-1)+0.5*rhoL*uL^2
 # const ER = pR/(γ-1)+0.5*rhoR*uR^2
-# const Bl = -0.5
-# const Br = 0.5
-
-# const γ = 1.4
-# const M_0 = 3.0
-# const mu = 0.01
-# const lambda = 0.0
-# const Pr = 3/4
-# const cp = γ/(γ-1)
-# const cv = 1/(γ-1)
-# const kappa = mu*cp/Pr
-
 # T = 0.2
+# t0 = 0.0
 # gr(size=(300,300),ylims=(0,1.2),legend=false,markerstrokewidth=1,markersize=2)
 # plot()
 
-# # shock translation
-# const γ = 1.4
-# const rhoL = 1.0
-# const rhoR = 0.125
-# const uL = 1.0
-# const uR = 1.0
-# const pL = 1.0
-# const pR = 1.0
-# const EL = pL/(γ-1)+0.5*rhoL*uL^2
-# const ER = pR/(γ-1)+0.5*rhoR*uR^2
-# const Bl = -0.5
-# const Br = 0.5
-
-# const γ = 1.4
-# const M_0 = 3.0
-# const mu = 0.01
-# const lambda = 0.0
-# const Pr = 3/4
-# const cp = γ/(γ-1)
-# const cv = 1/(γ-1)
-# const kappa = mu*cp/Pr
-
-# T = 0.1
-# gr(size=(300,300),ylims=(0,1.2),legend=false,markerstrokewidth=1,markersize=2)
-# plot()
-
+# "Viscous parameters"
+# const Re = 10000
+# const Ma = 0.3
+# const mu = 1/Re
+# const lambda = -2/3*mu
+# const Pr = .71
+# const cv = 1/γ/(γ-1)/Ma^2
+# const kappa = γ*cv*mu/Pr
 
 "Mesh related variables"
 VX = LinRange(Bl,Br,K+1)
@@ -206,7 +181,6 @@ L = Matrix(droptol!(sparse(L),TOL))
 S0 = Matrix(droptol!(sparse(S0),TOL))
 S = Matrix(droptol!(sparse((Qr-Qr')/2),TOL))
 
-
 """High order mesh"""
 x = V1*VX[transpose(EToV)]
 xf = Vf*x
@@ -236,9 +210,8 @@ function bisection_solve_velocity(x,max_iter,tol)
     num_iter = 0
 
     L_k = kappa/m_0/cv
-    #f(v) = -x+2*L_k/(γ+1)*(v_0/(v_0-v_1)*log((v_0-v)/(v_0-v_01))-v_1/(v_0-v_1)*log((v-v_1)/(v_01-v_1)))
-    f(v) = -x + 2*L_k/(γ+1)*log((v_0-v)^((v_0/(v_0-v_1)))*(v-v_1)^(-(v_1)/(v_0-v_1)))
-
+    f(v) = -x+2*L_k/(γ+1)*(v_0/(v_0-v_1)*log((v_0-v)/(v_0-v_01))-v_1/(v_0-v_1)*log((v-v_1)/(v_01-v_1)))
+    
     v_new = (v_L+v_R)/2
     while num_iter < max_iter
         v_new = (v_L+v_R)/2
@@ -256,8 +229,8 @@ function bisection_solve_velocity(x,max_iter,tol)
     return v_new
 end
 
-const max_iter = 10000
-const tol = 1e-16
+const max_iter = 100
+const tol = 1e-14
 
 function exact_sol_viscous_shocktube(x,t)
     u   = bisection_solve_velocity(x-v_inf*t,max_iter,tol)
@@ -269,77 +242,39 @@ end
 
 U = exact_sol_viscous_shocktube.(x,0.0)
 U = ([x[1] for x in U], [x[2] for x in U], [x[3] for x in U])
-# rho_init(x) = (x <= 0.0) ? rhoL : rhoR
-# u_init(x) = (x <= 0.0) ? uL : uR
-# p_init(x) = (x <= 0.0) ? pL : pR
-# U = (rho_init.(x), u_init.(x), p_init.(x))
-# U = primitive_to_conservative_hardcode.(U[1],U[2],U[3])
-# U = ([x[1] for x in U], [x[2] for x in U], [x[3] for x in U])
 
-function rhs_inviscid(U,K,N,Mlump_inv,S)
-    J = (Br-Bl)/K/2 # assume uniform interval
-    Nc = 3
-    rhsU        = [zeros(N+1,K) for i = 1:Nc]
-
-    p = pfun_nd.(U[1],U[2],U[3])
-    flux = zero.(U)
-    @. flux[1] = U[2]
-    @. flux[2] = U[2]^2/U[1]+p
-    @. flux[3] = U[3]*U[2]/U[1]+p*U[2]/U[1]
-
-    Ub = zero.(U)
-    @. Ub[1] = U[1]
-    @. Ub[2] = U[2]/U[1]
-    @. Ub[3] = U[1]/(2*p)
-
-    VU = v_ufun(U...)
-
-    wavespd_arr = zeros(N+1,K)
-    for k = 1:K
-        for i = 1:N+1
-            wavespd_arr[i,k] = wavespeed_1D(U[1][i,k],U[2][i,k],U[3][i,k])
-        end
-    end
-
-    for k = 1:K
-        # Volume term (flux differencing)
-        for j = 1:N+1
-            for i = 1:N+1
-                if i != j
-                    F = euler_fluxes(Ub[1][i,k],Ub[2][i,k],Ub[3][i,k],Ub[1][j,k],Ub[2][j,k],Ub[3][j,k])
-                    for c = 1:Nc
-                        rhsU[c][i,k] += 2*S[i,j]*F[c]
-                    end
-                end
-            end
-        end
-
-        # Surface term (numerical fluxes)
-        U_left   = (k == 1) ? [rhoL; rhoL*uL; EL]                 : [U[1][end,k-1]; U[2][end,k-1]; U[3][end,k-1]]
-        Ub_left  = (k == 1) ? [rhoL; uL; rhoL/(2*pL)]             : [Ub[1][end,k-1]; Ub[2][end,k-1]; Ub[3][end,k-1]]
-        f_left   = (k == 1) ? [rhoL*uL; rhoL*uL^2+pL; uL*(pL+EL)] : [flux[1][end,k-1]; flux[2][end,k-1]; flux[3][end,k-1]]
-        U_right  = (k == K) ? [rhoR; rhoR*uR; ER]                 : [U[1][1,k+1]; U[2][1,k+1]; U[3][1,k+1]]
-        Ub_right = (k == K) ? [rhoR; uR; rhoR/(2*pR)]             : [Ub[1][1,k+1]; Ub[2][1,k+1]; Ub[3][1,k+1]]
-        f_right  = (k == K) ? [rhoR*uR; rhoR*uR^2+pR; uR*(pR+ER)] : [flux[1][1,k+1]; flux[2][1,k+1]; flux[3][1,k+1]]
-        wavespd_l = max(wavespd_arr[1,k],wavespeed_1D(U_left[1],U_left[2],U_left[3]))
-        wavespd_r = max(wavespd_arr[end,k],wavespeed_1D(U_right[1],U_right[2],U_right[3]))
-        
-        F_l = euler_fluxes(Ub[1][1,k],Ub[2][1,k],Ub[3][1,k],Ub_left[1],Ub_left[2],Ub_left[3])
-        F_r = euler_fluxes(Ub[1][end,k],Ub[2][end,k],Ub[3][end,k],Ub_right[1],Ub_right[2],Ub_right[3])
-        for c = 1:Nc
-            rhsU[c][1,k] += -F_l[c]-wavespd_l/2*(U_left[c]-U[c][1,k])
-            rhsU[c][end,k] += F_r[c]-wavespd_r/2*(U_right[c]-U[c][end,k])
-        end
-
-        for c = 1:Nc
-            rhsU[c][:,k] = -1/J*Mlump_inv*rhsU[c][:,k]
-        end
-    end
-
-    return rhsU
+function zhang_wavespd(rhoL,rhouL,EL,sigma2L,sigma3L,pL,rhoR,rhouR,ER,sigma2R,sigma3R,pR)
+    uL   = rhouL/rhoL
+    eL   = (EL - .5*rhoL*uL^2)/rhoL
+    tauL = sigma2L
+    qL   = uL*tauL-sigma3L
+    uR   = rhouR/rhoR
+    eR   = (ER - .5*rhoR*uR^2)/rhoR
+    tauR = sigma2R
+    qR   = uR*tauR-sigma3R
+    wavespdL = abs(uL)+1/(2*rhoL^2*eL)*(sqrt(rhoL^2*qL^2+2*rhoL^2*eL*abs(tauL-pL)^2)+rhoL*abs(qL))
+    wavespdR = abs(uR)+1/(2*rhoR^2*eR)*(sqrt(rhoR^2*qR^2+2*rhoR^2*eR*abs(tauR-pR)^2)+rhoR*abs(qR))
+    return max(wavespdL,wavespdR)
 end
 
-function rhs_viscous(U,K,N,Mlump_inv,S)
+function zhang_wavespd(rhoL,rhouL,EL,sigma2L,sigma3L,pL)
+    uL   = rhouL/rhoL
+    eL   = (EL - .5*rhoL*uL^2)/rhoL
+    tauL = sigma2L
+    qL   = uL*tauL-sigma3L
+    wavespdL = abs(uL)+1/(2*rhoL^2*eL)*(sqrt(rhoL^2*qL^2+2*rhoL^2*eL*abs(tauL-pL)^2)+rhoL*abs(qL))
+    return wavespdL
+end
+
+function flux_lowIDP(U_i,U_j,f_i,f_j,c_ij,wavespd)
+    return c_ij*(f_i+f_j)-abs(c_ij)*wavespd*(U_j-U_i)
+end
+
+function flux_viscous(sigma_i,sigma_j,c_ij)
+    return c_ij*(sigma_i+sigma_j)
+end
+
+function rhs_low_viscous(U,K,N)
     J = (Br-Bl)/K/2 # assume uniform interval
     Nc = 3
     rhsU  = [zeros(N+1,K) for i = 1:Nc]
@@ -396,13 +331,87 @@ function rhs_viscous(U,K,N,Mlump_inv,S)
     sigmax = sigmax .+ surfx.(sxP,sxf) #.+ penalization.(VUP,VUf)
     sigmax = sigmax./J
 
-    return sigmax
+    return sigmax,sigma
 end
 
-function rhs_ESDG(U,K,N,Mlump_inv,S)
-    rhsI = rhs_inviscid(U,K,N,Mlump_inv,S)
-    rhsV = rhs_viscous(U,K,N,Mlump_inv,S)
-    return rhsI .+ rhsV
+function rhs_IDP(U,K,N,Mlump_inv,S0,S,wq,dt)
+    p = pfun_nd.(U[1],U[2],U[3])
+    flux = zero.(U)
+    @. flux[1] = U[2]
+    @. flux[2] = U[2]^2/U[1]+p
+    @. flux[3] = U[3]*U[2]/U[1]+p*U[2]/U[1]
+
+    Ub = zero.(U)
+    @. Ub[1] = U[1]
+    @. Ub[2] = U[2]/U[1]
+    @. Ub[3] = U[1]/(2*p)
+
+    J = (Br-Bl)/K/2 # assume uniform interval
+
+    # Low order and high order algebraic fluxes
+    F_low       = [zeros(N+1,N+1),zeros(N+1,N+1),zeros(N+1,N+1)]
+    F_low_P     = [zeros(2),zeros(2),zeros(2)] # 1: left boundary, 2: right boundary
+    L           = zeros(N+1,N+1) # Array of limiting params
+    rhsU        = [zeros(N+1,K),zeros(N+1,K),zeros(N+1,K)]
+    
+    # TODO: redundant!
+    _,sigma = rhs_low_viscous(U,K,N)
+    wavespd_arr = zeros(N+1,K)
+    beta_arr = zeros(N+1,K)
+    for k = 1:K
+        for i = 1:N+1
+            wavespd_arr[i,k] = wavespeed_1D(U[1][i,k],U[2][i,k],U[3][i,k])
+            beta_arr[i,k] = zhang_wavespd(U[1][i,k],U[2][i,k],U[3][i,k],sigma[2][i,k],sigma[3][i,k],p[i,k])
+        end
+    end
+
+    L_plot = zeros(N+1,K)
+    
+    for k = 1:K
+        L = zeros(N+1,N+1)
+        for i = 1:N+1
+            for j = 1:N+1
+                if i != j 
+                    wavespd = max(wavespd_arr[i,k],wavespd_arr[j,k],beta_arr[i,k],beta_arr[j,k])
+                    for c = 1:3
+                        F_low[c][i,j]  = -flux_viscous(sigma[c][i,k],sigma[c][j,k],S[i,j])+flux_lowIDP(U[c][i,k],U[c][j,k],flux[c][i,k],flux[c][j,k],S0[i,j],wavespd)
+                    end
+                end
+            end
+        end
+
+
+        U_left   = (k == 1) ? [rhoL; rhoL*uL; EL]                 : [U[1][end,k-1]; U[2][end,k-1]; U[3][end,k-1]]
+        f_left   = (k == 1) ? [rhoL*uL; rhoL*uL^2+pL; uL*(pL+EL)] : [flux[1][end,k-1]; flux[2][end,k-1]; flux[3][end,k-1]]
+        U_right  = (k == K) ? [rhoR; rhoR*uR; ER]                 : [U[1][1,k+1]; U[2][1,k+1]; U[3][1,k+1]]
+        f_right  = (k == K) ? [rhoR*uR; rhoR*uR^2+pR; uR*(pR+ER)] : [flux[1][1,k+1]; flux[2][1,k+1]; flux[3][1,k+1]]
+        p_left   = (k == 1) ? pL : p[end,k-1]
+        p_right  = (k == K) ? pR : p[1,k+1]
+        # Assume velocity doesn't change at boundary, isothermal
+        TL = pL/rhoL/(γ-1)/cv
+        TR = pR/rhoR/(γ-1)/cv
+        sigma_left  = (k == 1) ? [sigma[1][1,1];sigma[2][1,1];sigma[3][1,1]]       : [sigma[1][end,k-1]; sigma[2][end,k-1]; sigma[3][end,k-1]]
+        sigma_right = (k == K) ? [sigma[1][end,k];sigma[2][end,k];sigma[3][end,k]] : [sigma[1][1,k+1]; sigma[2][1,k+1]; sigma[3][1,k+1]] 
+        wavespd_l = max(wavespd_arr[1,k],wavespeed_1D(U_left[1],U_left[2],U_left[3]),beta_arr[1,k],zhang_wavespd(U_left[1],U_left[2],U_left[3],sigma_left[2],sigma_left[3],p_left))
+        wavespd_r = max(wavespd_arr[end,k],wavespeed_1D(U_right[1],U_right[2],U_right[3]),beta_arr[end,k],zhang_wavespd(U_right[1],U_right[2],U_right[3],sigma_right[2],sigma_right[3],p_right))
+
+        for c = 1:3
+            F_low_P[c][1] = -flux_viscous(sigma[c][1,k],sigma_left[c],-1/2)+flux_lowIDP(U[c][1,k],U_left[c],flux[c][1,k],f_left[c],-0.5,wavespd_l) 
+            F_low_P[c][2] = -flux_viscous(sigma[c][end,k],sigma_right[c],1/2)+flux_lowIDP(U[c][end,k],U_right[c],flux[c][end,k],f_right[c],0.5,wavespd_r)
+        end
+
+        for c = 1:3
+            # With limiting
+            rhsU[c][:,k] = -sum(F_low[c],dims=2)
+
+            rhsU[c][1,k] += -F_low_P[c][1]
+            rhsU[c][N+1,k] += -F_low_P[c][2]
+
+            rhsU[c][:,k] .= 1/J*Mlump_inv*rhsU[c][:,k]
+        end
+    end
+
+    return rhsU
 end
 
 
@@ -418,7 +427,6 @@ resZ = [zeros(size(x)),zeros(size(x)),zeros(size(x))]
 
 Vp = vandermonde_1D(N,LinRange(-1,1,10))/VDM
 
-
 anim = Animation()
 const ptL = Bl+(Br-Bl)/K/(N+1)/2
 const ptR = Br-(Br-Bl)/K/(N+1)/2
@@ -428,34 +436,28 @@ i = 1
 while t < T
 
     # SSPRK(3,3)
+    # rhsU,dt,_ = rhs_IDP(U,K,N,Mlump_inv,S0,S,wq)
+    # dt = min(dt,T-t)
     dt = min(1e-4,T-t)
-    rhsU = rhs_ESDG(U,K,N,Mlump_inv,S)
+    rhsU = rhs_IDP(U,K,N,Mlump_inv,S0,S,wq,dt)
     @. resW = U + dt*rhsU
-    rhsU = rhs_ESDG(U,K,N,Mlump_inv,S)
+    rhsU = rhs_IDP(resW,K,N,Mlump_inv,S0,S,wq,dt)
     @. resZ = resW+dt*rhsU
     @. resW = 3/4*U+1/4*resZ
-    rhsU = rhs_ESDG(U,K,N,Mlump_inv,S)
+    rhsU = rhs_IDP(resW,K,N,Mlump_inv,S0,S,wq,dt)
     @. resZ = resW+dt*rhsU
     @. U = 1/3*U+2/3*resZ
 
     global t = t + dt
     global i = i + 1
     println("Current time $t with time step size $dt, and final time $T")  
-    if mod(i,1000) == 1
-        plot(x,U[1])
-        # for k = 1:K
-        #     plot!(ptL+(k-1)*hplot*(N+1):hplot:ptL+k*hplot*(N+1), 1 .-L_plot[:,k],st=:bar,alpha=0.2)
-        # end
-        frame(anim)
-    end
-
-    # if i == 10
-    #     break
+    # if mod(i,1000) == 1
+    #     plot(x,U[1])
     # end
 end
 
 plot(x,U[1])
-gif(anim,"~/Desktop/tmp.gif",fps=15)
+#gif(anim,"~/Desktop/tmp.gif",fps=15)
 
 
 exact_U = @. exact_sol_viscous_shocktube.(x,T)

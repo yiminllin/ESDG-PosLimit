@@ -80,15 +80,15 @@ function is_zero(a)
 end
 
 function Riemann_2D(x,y)
-    # if x >= 0 && y >= 0
-    #     return .5313, 0.0, 0.0, 0.4
-    # elseif x < 0 && y >= 0
-    #     return 1.0, .7276, 0.0, 1.0
-    # elseif x < 0 && y < 0
-    #     return .8, 0.0, 0.0, 1.0
-    # else
-    #     return 1.0, 0.0, .7276, 1.0
-    # end
+    if x >= 0 && y >= 0
+        return .5313, 0.0, 0.0, 0.4
+    elseif x < 0 && y >= 0
+        return 1.0, .7276, 0.0, 1.0
+    elseif x < 0 && y < 0
+        return .8, 0.0, 0.0, 1.0
+    else
+        return 1.0, 0.0, .7276, 1.0
+    end
     # if x >= 0 && y >= 0
     #     return .5313, 0.0, 0.0, 0.004#0.4
     # elseif x < 0 && y >= 0
@@ -98,15 +98,15 @@ function Riemann_2D(x,y)
     # else
     #     return 1.0, 0.0, .7276, 1.0
     # end
-    if x >= 0 && y >= 0
-        return 1.5, 0.0, 0.0, 1.5
-    elseif x < 0 && y >= 0
-        return 0.5323, 1.206, 0.0, 0.3
-    elseif x < 0 && y < 0
-        return .138, 1.206, 1.206, 0.029
-    else
-        return 0.5323, 0.0, 1.206, 0.3
-    end
+    # if x >= 0 && y >= 0
+    #     return 1.5, 0.0, 0.0, 1.5
+    # elseif x < 0 && y >= 0
+    #     return 0.5323, 1.206, 0.0, 0.3
+    # elseif x < 0 && y < 0
+    #     return .138, 1.206, 1.206, 0.029
+    # else
+    #     return 0.5323, 0.0, 1.206, 0.3
+    # end
 end
 
 function vortex(x,y,t,γ=1.4)
@@ -131,10 +131,10 @@ const Nc = 4 # number of components
 "Approximation parameters"
 # N = 3 # The order of approximation
 # K1D = 20
-N = 4
-K1D = 10
+N = 2
+K1D = 16
 #T = 0.25
-T = 0.2
+T = 0.25
 
 "Mesh related variables"
 Kx = K1D
@@ -892,39 +892,56 @@ end
 "Time integration"
 t = 0.0
 U = collect(U)
+resU = [zeros(size(x)),zeros(size(x)),zeros(size(x)),zeros(size(x))]
+resW = [zeros(size(x)),zeros(size(x)),zeros(size(x)),zeros(size(x))]
+resZ = [zeros(size(x)),zeros(size(x)),zeros(size(x)),zeros(size(x))]
 
 @unpack VDM = rd
-rp,sp = equi_nodes_2D(30)
+rp,sp = equi_nodes_2D(20)
 Vp = vandermonde_2D(N,rp,sp)/VDM
 gr(aspect_ratio=:equal,legend=false,
-   markerstrokewidth=0,markersize=2)
+   markerstrokewidth=0,markersize=2,axis=nothing)
 const GIFINTERVAL = 100
 #plot()
 
 
-dt = 0.00005
-Nsteps = Int(T/dt)
+dt_hist = []
+anim = Animation()
+i = 1
 
-L_sum_hist = zeros(Nsteps)
+while t < T
+    #rhsU,dt = rhs_IDP(U,K1D,N,Nfaces,nxJ,nyJ,Minv,Sr,Ss,S0r,S0s,Br,Bs,face_idx,mapM,mapP_x,mapP_y,i)
+    # @. U = U + dt*rhsU
 
-#@gif for i = 1:Nsteps
-for i = 1:Nsteps
-    rhsU, L_plot = rhs_IDP(U,K1D,N,Nfaces,nxJ,nyJ,Minv,Sr,Ss,S0r,S0s,Br,Bs,face_idx,mapM,mapP_x,mapP_y,dt)
-    #L_sum_hist[i] = sum(L_plot)#sum(L_plot)
-    #rhsU = rhs_ESDG(U,K1D,N,Nfaces,nxJ,nyJ,Minv,Sr,Ss,S0r,S0s,Br,Bs,face_idx,mapM,mapP_x,mapP_y)
-    #rhsU = rhs_IDPlow(U,K1D,N,Nfaces,nxJ,nyJ,Minv,Sr,Ss,S0r,S0s,Br,Bs,face_idx,mapM,mapP_x,mapP_y)
-    @. U = U + dt*rhsU
+    # SSPRK(3,3)
+    dt = 1e-4
+    rhsU,_ = rhs_IDP(U,K1D,N,Nfaces,nxJ,nyJ,Minv,Sr,Ss,S0r,S0s,Br,Bs,face_idx,mapM,mapP_x,mapP_y,dt)
+    dt = min(dt,T-t)
+    @. resW = U + dt*rhsU
+    rhsU,_ = rhs_IDP(U,K1D,N,Nfaces,nxJ,nyJ,Minv,Sr,Ss,S0r,S0s,Br,Bs,face_idx,mapM,mapP_x,mapP_y,dt)
+    @. resZ = resW+dt*rhsU
+    @. resW = 3/4*U+1/4*resZ
+    rhsU,_ = rhs_IDP(U,K1D,N,Nfaces,nxJ,nyJ,Minv,Sr,Ss,S0r,S0s,Br,Bs,face_idx,mapM,mapP_x,mapP_y,dt)
+    @. resZ = resW+dt*rhsU
+    @. U = 1/3*U+2/3*resZ
+
+    push!(dt_hist,dt)
     global t = t + dt
-    println("Current time $t with time step size $dt, and final time $T")  
-    # if i % GIFINTERVAL == 0  
+    println("Current time $t with time step size $dt, and final time $T, at step $i")  
+    global i = i + 1
+    # if mod(i,50) == 1
     #     scatter(Vp*x,Vp*y,Vp*U[1],zcolor=Vp*U[1],camera=(0,90))
-    #     #scatter(Vp*x,Vp*y,Vp*L_plot,zcolor=Vp*L_plot,camera=(0,90))
+    #     frame(anim)
     # end
 end
-#end every GIFINTERVAL
 
-p = pfun_nd(U[1],U[2],U[3],U[4])
+xp = Vp*x
+yp = Vp*y
+rhop = Vp*U[1]
+p = pfun_nd.(U[1],U[2],U[3],U[4])
+pp = Vp*p
 #plt = scatter(Vp*x,Vp*y,Vp*U[1],zcolor=Vp*U[1],camera=(0,90))
-plt = scatter(Vp*x,Vp*y,Vp*p,zcolor=Vp*p,camera=(0,90))
-display(plt)
-savefig(plt, "~/Desktop/tmp.png")
+plt = scatter(xp,yp,rhop,zcolor=rhop,camera=(0,90))
+#display(plt)
+savefig(plt,"~/Desktop/tmp.png")
+#gif(anim,"~/Desktop/tmp.gif",fps=15)

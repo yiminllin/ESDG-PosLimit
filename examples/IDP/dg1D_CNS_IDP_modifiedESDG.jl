@@ -94,18 +94,18 @@ T = 6.0
 t0 = 0.0
 #T = 0.0039
 
-# # Sod shocktube
-# const γ = 1.4
-# const Bl = -0.5
-# const Br = 0.5
-# const rhoL = 1.0
-# const rhoR = 0.125
-# const pL = 1.0
-# const pR = 0.1
-# const xC = 0.0
-# const GIFINTERVAL = 20
-# T = 0.2
-# t0 = 0.0
+# Sod shocktube
+const γ = 1.4
+const Bl = -0.5
+const Br = 0.5
+const rhoL = 1.0
+const rhoR = 0.125
+const pL = 1.0
+const pR = 0.1
+const xC = 0.0
+const GIFINTERVAL = 20
+T = 0.2
+t0 = 0.0
 
 # # Leblanc shocktube
 # const γ = 5/3
@@ -132,23 +132,23 @@ t0 = 0.0
 # const xC = 0.33
 # T = 2/3
 
-# Ignacio - Leblanc shocktube 2 
-const γ = 5/3
-const Bl = 0.0
-const Br = 1.0
-const rhoL = 1.0
-const rhoR = 1e-3
-const pL = (γ-1)*1e-1
-const pR = (γ-1)*1e-7
-const uL = 0.0
-const uR = 0.0
-const xC = 0.33
-T = 2/3
-t0 = 0.1
-exact_sol = exact_sol_Leblanc
+# # Ignacio - Leblanc shocktube 2 
+# const γ = 5/3
+# const Bl = 0.0
+# const Br = 1.0
+# const rhoL = 1.0
+# const rhoR = 1e-3
+# const pL = (γ-1)*1e-1
+# const pR = (γ-1)*1e-7
+# const uL = 0.0
+# const uR = 0.0
+# const xC = 0.33
+# T = 2/3
+# t0 = 0.1
+# exact_sol = exact_sol_Leblanc
 
 "Viscous parameters"
-const Re = 10000
+const Re = 1000
 const Ma = 0.3
 const mu = 1/Re
 const lambda = -2/3*mu
@@ -325,57 +325,116 @@ function rhs_viscous(U,K,N,Mlump_inv,Qr)
 
     VU = v_ufun(U...)
 
+    
+    VUf = (x->Vf*x).(VU)
+    VUP = (x->x[mapP]).(VUf)
+    VU_left = v_ufun(rhoL,0.0,pL/(γ-1))
+    VU_right = v_ufun(rhoR,0.0,pR/(γ-1))
+    VUP[1][1] = VU_left[1]
+    VUP[2][1] = VU_left[2]
+    VUP[3][1] = VU_left[3]
+    VUP[1][end] = VU_right[1]
+    VUP[2][end] = VU_right[2]
+    VUP[3][end] = VU_right[3]
+
+    VUx = (x->Dr*x).(VU)
+
+    surfx(uP,uf) = (Mlump_inv*Vf'*(@. .5*(uP-uf)*nxJ))
+    VUx = VUx .+ surfx.(VUP,VUf)
+    theta = (x->x./J).(VUx)
+
+    sigma = zero.(VU)
+    Kx = zeros(3,3)
     for k = 1:K
-        # Construct theta \approx dv/dx 
-        # Volume term
-        for c = 1:Nc
-            theta[c][:,k] = Qr*VU[c][:,k]
-        end
-
-        # Surface term (numerical fluxes)
-        VU_left  = (k == 1) ? [v_ufun(rhoL,0.0,pL/(γ-1))...] : [VU[1][end,k-1]; VU[2][end,k-1]; VU[3][end,k-1]]
-        VU_right = (k == K) ? [v_ufun(rhoR,0.0,pR/(γ-1))...] : [VU[1][1,k+1]; VU[2][1,k+1]; VU[3][1,k+1]]
-        for c = 1:Nc
-            theta[c][1,k] -= 1/2*(VU_left[c]-VU[c][1,k])
-            theta[c][end,k] += 1/2*(VU_right[c]-VU[c][end,k])
-            theta[c][:,k] = 1/J*Mlump_inv*theta[c][:,k]
-        end
-
-        # Construct sigma
         for i = 1:N+1
             Kx = zeros(3,3)
-            Kx[2,2] = (lambda-2*mu)*VU[3][i]^2
-            Kx[2,3] = (lambda+2*mu)*VU[2][i]*VU[3][i]
+            Kx[2,2] = (lambda-2*mu)*VU[3][i,k]^2
+            Kx[2,3] = (lambda+2*mu)*VU[2][i,k]*VU[3][i,k]
             Kx[3,2] = Kx[2,3]
-            Kx[3,3] = (lambda+2*mu)*VU[2][i]^2-γ*mu*VU[3][i]/Pr
-            Kx = 1/VU[3][i]^3*Kx
-        
-            sigma[2][i] = Kx[2,2]*theta[2][i] + Kx[2,3]*theta[3][i]
-            sigma[3][i] = Kx[3,2]*theta[2][i] + Kx[3,3]*theta[3][i]
+            Kx[3,3] = -((lambda+2*mu)*VU[2][i,k]^2-γ*mu*VU[3][i,k]/Pr)
+            Kx = 1/VU[3][i,k]^3*Kx
+
+            sigma[2][i,k] = Kx[2,2]*theta[2][i,k] + Kx[2,3]*theta[3][i,k]
+            sigma[3][i,k] = Kx[3,2]*theta[2][i,k] + Kx[3,3]*theta[3][i,k]
         end
-
-        # Constuct rhs
-        # Volume term
-        for c = 1:Nc
-            rhsU[c][:,k] = Qr*sigma[c][:,k]
-        end
-
-        # Surface term (numerical fluxes)
-        # TODO: how to enforce BC?
-        # sigma_left  = (k == 1) ? [0.0;0.0;0.0] : [sigma[1][end,k-1]; sigma[2][end,k-1]; sigma[3][end,k-1]]
-        # sigma_right = (k == K) ? [0.0;0.0;0.0] : [sigma[1][1,k+1]; sigma[2][1,k+1]; sigma[3][1,k+1]]
-        sigma_left  = (k == 1) ? [sigma[1][1,k];sigma[2][1,k];sigma[3][1,k]] : [sigma[1][end,k-1]; sigma[2][end,k-1]; sigma[3][end,k-1]]
-        sigma_right = (k == K) ? [sigma[1][end,k];sigma[2][end,k];sigma[3][end,k]] : [sigma[1][1,k+1]; sigma[2][1,k+1]; sigma[3][1,k+1]]
-
-        for c = 1:Nc
-            rhsU[c][1,k] -= 1/2*(sigma_left[c]-sigma[c][1,k])
-            rhsU[c][end,k] += 1/2*(sigma_right[c]-sigma[c][end,k])
-            rhsU[c][:,k] = 1/J*Mlump_inv*rhsU[c][:,k]
-        end
-
     end
 
-    return rhsU
+    sf = (x->Vf*x).(sigma)
+    sP = (x->x[mapP]).(sigma)
+    sP[1][1] = sf[1][1]
+    sP[2][1] = sf[2][1]
+    sP[3][1] = sf[3][1]
+    sP[1][end] = sf[1][end]
+    sP[2][end] = sf[2][end]
+    sP[3][end] = sf[3][end]
+
+    sigmax = (x->Dr*x).(sigma)
+
+    surfx(uP,uf) = (Mlump_inv*Vf'*(@. .5*(uP-uf)*nxJ))
+    sigmax = sigmax .+ surfx.(sP,sf)
+    rhs = (x->x./J).(sigmax)
+
+    return rhs
+
+    # for k = 1:K
+    #     # Construct theta \approx dv/dx 
+    #     # Volume term
+    #     for c = 1:Nc
+    #         theta[c][:,k] = Qr*VU[c][:,k]
+    #     end
+
+    #     # Surface term (numerical fluxes)
+    #     VU_left  = (k == 1) ? [v_ufun(rhoL,0.0,pL/(γ-1))...] : [VU[1][end,k-1]; VU[2][end,k-1]; VU[3][end,k-1]]
+    #     VU_right = (k == K) ? [v_ufun(rhoR,0.0,pR/(γ-1))...] : [VU[1][1,k+1]; VU[2][1,k+1]; VU[3][1,k+1]]
+    #     for c = 1:Nc
+    #         theta[c][1,k] -= 1/2*(VU_left[c]-VU[c][1,k])
+    #         theta[c][end,k] += 1/2*(VU_right[c]-VU[c][end,k])
+    #         theta[c][:,k] = 1/J*Mlump_inv*theta[c][:,k]
+    #     end
+
+    #     # Construct sigma
+    #     for i = 1:N+1
+    #         # Kx = zeros(3,3)
+    #         # Kx[2,2] = (lambda-2*mu)*VU[3][i]^2
+    #         # Kx[2,3] = (lambda+2*mu)*VU[2][i]*VU[3][i]
+    #         # Kx[3,2] = Kx[2,3]
+    #         # Kx[3,3] = (lambda+2*mu)*VU[2][i]^2-γ*mu*VU[3][i]/Pr
+    #         # Kx = 1/VU[3][i]^3*Kx
+        
+    #         # sigma[2][i] = Kx[2,2]*theta[2][i] + Kx[2,3]*theta[3][i]
+    #         # sigma[3][i] = Kx[3,2]*theta[2][i] + Kx[3,3]*theta[3][i]
+    #         Kx = zeros(3,3)
+    #         Kx[2,2] = (lambda-2*mu)*VU[3][i,k]^2
+    #         Kx[2,3] = (lambda+2*mu)*VU[2][i,k]*VU[3][i,k]
+    #         Kx[3,2] = Kx[2,3]
+    #         Kx[3,3] = -((lambda+2*mu)*VU[2][i,k]^2-γ*mu*VU[3][i,k]/Pr)
+    #         Kx = 1/VU[3][i,k]^3*Kx
+        
+    #         sigma[2][i,k] = Kx[2,2]*theta[2][i,k] + Kx[2,3]*theta[3][i,k]
+    #         sigma[3][i,k] = Kx[3,2]*theta[2][i,k] + Kx[3,3]*theta[3][i,k]
+    #     end
+
+    #     # Constuct rhs
+    #     # Volume term
+    #     for c = 1:Nc
+    #         rhsU[c][:,k] = Qr*sigma[c][:,k]
+    #     end
+
+    #     # Surface term (numerical fluxes)
+    #     # TODO: how to enforce BC?
+    #     # sigma_left  = (k == 1) ? [0.0;0.0;0.0] : [sigma[1][end,k-1]; sigma[2][end,k-1]; sigma[3][end,k-1]]
+    #     # sigma_right = (k == K) ? [0.0;0.0;0.0] : [sigma[1][1,k+1]; sigma[2][1,k+1]; sigma[3][1,k+1]]
+    #     sigma_left  = (k == 1) ? [sigma[1][1,k];sigma[2][1,k];sigma[3][1,k]] : [sigma[1][end,k-1]; sigma[2][end,k-1]; sigma[3][end,k-1]]
+    #     sigma_right = (k == K) ? [sigma[1][end,k];sigma[2][end,k];sigma[3][end,k]] : [sigma[1][1,k+1]; sigma[2][1,k+1]; sigma[3][1,k+1]]
+
+    #     for c = 1:Nc
+    #         rhsU[c][1,k] -= 1/2*(sigma_left[c]-sigma[c][1,k])
+    #         rhsU[c][end,k] += 1/2*(sigma_right[c]-sigma[c][end,k])
+    #         rhsU[c][:,k] = 1/J*Mlump_inv*rhsU[c][:,k]
+    #     end
+    # end
+
+    # return rhsU
 end
 
 function rhs_ESDG(U,K,N,Mlump_inv,S,Qr)
@@ -451,15 +510,24 @@ function rhs_low_viscous(U,K,N,Qr0)
 
         # Construct sigma
         for i = 1:N+1
-            Kx = zeros(3,3)
-            Kx[2,2] = (lambda-2*mu)*VU[3][i]^2
-            Kx[2,3] = (lambda+2*mu)*VU[2][i]*VU[3][i]
-            Kx[3,2] = Kx[2,3]
-            Kx[3,3] = (lambda+2*mu)*VU[2][i]^2-γ*mu*VU[3][i]/Pr
-            Kx = 1/VU[3][i]^3*Kx
+            # Kx = zeros(3,3)
+            # Kx[2,2] = (lambda-2*mu)*VU[3][i]^2
+            # Kx[2,3] = (lambda+2*mu)*VU[2][i]*VU[3][i]
+            # Kx[3,2] = Kx[2,3]
+            # Kx[3,3] = (lambda+2*mu)*VU[2][i]^2-γ*mu*VU[3][i]/Pr
+            # Kx = 1/VU[3][i]^3*Kx
         
-            sigma[2][i] = Kx[2,2]*theta[2][i] + Kx[2,3]*theta[3][i]
-            sigma[3][i] = Kx[3,2]*theta[2][i] + Kx[3,3]*theta[3][i]
+            # sigma[2][i] = Kx[2,2]*theta[2][i] + Kx[2,3]*theta[3][i]
+            # sigma[3][i] = Kx[3,2]*theta[2][i] + Kx[3,3]*theta[3][i]
+            Kx = zeros(3,3)
+            Kx[2,2] = (lambda-2*mu)*VU[3][i,k]^2
+            Kx[2,3] = (lambda+2*mu)*VU[2][i,k]*VU[3][i,k]
+            Kx[3,2] = Kx[2,3]
+            Kx[3,3] = (lambda+2*mu)*VU[2][i,k]^2-γ*mu*VU[3][i,k]/Pr
+            Kx = 1/VU[3][i,k]^3*Kx
+        
+            sigma[2][i,k] = Kx[2,2]*theta[2][i,k] + Kx[2,3]*theta[3][i,k]
+            sigma[3][i,k] = Kx[3,2]*theta[2][i,k] + Kx[3,3]*theta[3][i,k]
         end
 
         # Constuct rhs
@@ -1017,38 +1085,38 @@ while t < T
     # @. resZ = resW+dt*rhsU
     # @. U = 1/3*U+2/3*resZ
 
-    # dt = 0.0001
-    # rhsU = rhs_ESDG(U,K,N,Mlump_inv,S,Qr)
-    # @. resW = U + dt*rhsU
-    # rhsU = rhs_ESDG(U,K,N,Mlump_inv,S,Qr)
-    # @. resZ = resW+dt*rhsU
-    # @. resW = 3/4*U+1/4*resZ
-    # rhsU = rhs_ESDG(U,K,N,Mlump_inv,S,Qr)
-    # @. resZ = resW+dt*rhsU
-    # @. U = 1/3*U+2/3*resZ
-
-    # SSPRK(3,3)
-    rhsU,dt,_ = rhs_IDP(U,K,N,Mlump_inv,S0,S,wq)
-    #dt = min(dt,T-t)
-    dt = min(dt,T-t)
+    dt = 0.0001
+    rhsU = rhs_ESDG(U,K,N,Mlump_inv,S,Qr)
     @. resW = U + dt*rhsU
-    rhsU,_ = rhs_IDP(resW,K,N,Mlump_inv,S0,S,wq,dt)
+    rhsU = rhs_ESDG(U,K,N,Mlump_inv,S,Qr)
     @. resZ = resW+dt*rhsU
     @. resW = 3/4*U+1/4*resZ
-    rhsU,L_plot = rhs_IDP(resW,K,N,Mlump_inv,S0,S,wq,dt)
+    rhsU = rhs_ESDG(U,K,N,Mlump_inv,S,Qr)
     @. resZ = resW+dt*rhsU
     @. U = 1/3*U+2/3*resZ
+
+    # # SSPRK(3,3)
+    # rhsU,dt,_ = rhs_IDP(U,K,N,Mlump_inv,S0,S,wq)
+    # #dt = min(dt,T-t)
+    # dt = min(dt,T-t)
+    # @. resW = U + dt*rhsU
+    # rhsU,_ = rhs_IDP(resW,K,N,Mlump_inv,S0,S,wq,dt)
+    # @. resZ = resW+dt*rhsU
+    # @. resW = 3/4*U+1/4*resZ
+    # rhsU,L_plot = rhs_IDP(resW,K,N,Mlump_inv,S0,S,wq,dt)
+    # @. resZ = resW+dt*rhsU
+    # @. U = 1/3*U+2/3*resZ
 
 
     global t = t + dt
     global i = i + 1
     println("Current time $t with time step size $dt, and final time $T")  
     if mod(i,600) == 1
-        plot(Vp*x,Vp*U[1])
-        for k = 1:K
-            plot!(ptL+(k-1)*hplot*(N+1):hplot:ptL+k*hplot*(N+1), 1 .-L_plot[:,k],st=:bar,alpha=0.2)
-        end
-        frame(anim)
+        # plot(Vp*x,Vp*U[1])
+        # for k = 1:K
+        #     plot!(ptL+(k-1)*hplot*(N+1):hplot:ptL+k*hplot*(N+1), 1 .-L_plot[:,k],st=:bar,alpha=0.2)
+        # end
+        # frame(anim)
     end
     # if i % GIFINTERVAL == 0  
     #     plot(Vp*x,Vp*U[1])

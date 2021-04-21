@@ -80,15 +80,15 @@ function is_zero(a)
 end
 
 function Riemann_2D(x,y)
-    # if x >= 0 && y >= 0
-    #     return .5313, 0.0, 0.0, 0.4
-    # elseif x < 0 && y >= 0
-    #     return 1.0, .7276, 0.0, 1.0
-    # elseif x < 0 && y < 0
-    #     return .8, 0.0, 0.0, 1.0
-    # else
-    #     return 1.0, 0.0, .7276, 1.0
-    # end
+    if x >= 0 && y >= 0
+        return .5313, 0.0, 0.0, 0.4
+    elseif x < 0 && y >= 0
+        return 1.0, .7276, 0.0, 1.0
+    elseif x < 0 && y < 0
+        return .8, 0.0, 0.0, 1.0
+    else
+        return 1.0, 0.0, .7276, 1.0
+    end
 
     # if x >= 0 && y >= 0
     #     return .5313, 0.0, 0.0, 0.004#0.4
@@ -100,15 +100,15 @@ function Riemann_2D(x,y)
     #     return 1.0, 0.0, .7276, 1.0
     # end
 
-    if x >= 0 && y >= 0
-        return 1.5, 0.0, 0.0, 1.5
-    elseif x < 0 && y >= 0
-        return 0.5323, 1.206, 0.0, 0.3
-    elseif x < 0 && y < 0
-        return .138, 1.206, 1.206, 0.029
-    else
-        return 0.5323, 0.0, 1.206, 0.3
-    end
+    # if x >= 0 && y >= 0
+    #     return 1.5, 0.0, 0.0, 1.5
+    # elseif x < 0 && y >= 0
+    #     return 0.5323, 1.206, 0.0, 0.3
+    # elseif x < 0 && y < 0
+    #     return .138, 1.206, 1.206, 0.029
+    # else
+    #     return 0.5323, 0.0, 1.206, 0.3
+    # end
 end
 
 function vortex(x,y,t,γ=1.4)
@@ -133,12 +133,12 @@ const Nc = 4 # number of components
 "Approximation parameters"
 # N = 3 # The order of approximation
 # K1D = 20
-N = 4
-K1D = 10
+N = 2
+K1D = 16
 # N = 3
 # K1D = 64
 #T = 0.25
-T = 0.3
+T = 0.25
 
 "Mesh related variables"
 Kx = K1D
@@ -557,6 +557,188 @@ function rhs_IDP(U,K1D,N,Nfaces,nxJ,nyJ,Minv,Sr,Ss,S0r,S0s,Br,Bs,face_idx,mapM,m
     return rhsU,dt
 end
 
+function rhs_IDP(U,K1D,N,Nfaces,nxJ,nyJ,Minv,Sr,Ss,S0r,S0s,Br,Bs,face_idx,mapM,mapP_x,mapP_y,step,dt)
+    p = pfun_nd.(U[1],U[2],U[3],U[4])
+    flux_x = zero.(U)
+    flux_y = zero.(U)
+    @. flux_x[1] = U[2]
+    @. flux_x[2] = U[2]^2/U[1]+p
+    @. flux_x[3] = U[2]*U[3]/U[1]
+    @. flux_x[4] = U[4]*U[2]/U[1]+p*U[2]/U[1]
+    @. flux_y[1] = U[3]
+    @. flux_y[2] = U[2]*U[3]/U[1]
+    @. flux_y[3] = U[3]^2/U[1]+p
+    @. flux_y[4] = U[4]*U[3]/U[1]+p*U[3]/U[1]
+
+    Ub = zero.(U)
+    @. Ub[1] = U[1]
+    @. Ub[2] = U[2]/U[1]
+    @. Ub[3] = U[3]/U[1]
+    @. Ub[4] = U[1]/(2*p)
+
+    K = K1D^2
+    Nfp = Nfaces*N
+    Np = (N+1)*(N+1)
+    J = (1/K1D)^2
+    Jf = 1/K1D
+    rxJ = 1/K1D
+    syJ = 1/K1D
+    sJ = 1/K1D
+
+    F_low  = [zeros(Np,Np) for i = 1:Nc]
+    F_high = [zeros(Np,Np) for i = 1:Nc]
+    F_P    = [zeros(Nfp) for i = 1:Nc]
+    rhsU   = [zeros(Np,K) for i = 1:Nc]
+    U_low  = [zeros(Np) for i = 1:Nc]
+    L = zeros(Np,Np)
+
+    for k = 1:K
+        for c = 1:Nc
+            for i = 1:Nfp
+                F_P[c][i] = 0.0
+            end
+            for i = 1:Np
+                U_low[c][i] = 0.0
+            end
+        end
+
+        # Calculate interior low and high order flux
+        for i = 1:Np
+            for j = 1:Np
+                c_ij_norm = sqrt(S0r[i,j]^2+S0s[i,j]^2)
+                if abs(c_ij_norm) >= TOL
+                    n_ij = [S0r[i,j]; S0s[i,j]]./c_ij_norm
+                    wavespd_i = wavespeed_1D(U[1][i,k],(n_ij[1]*U[2][i,k]+n_ij[2]*U[3][i,k]),U[4][i,k])
+                    wavespd_j = wavespeed_1D(U[1][j,k],(n_ij[1]*U[2][j,k]+n_ij[2]*U[3][j,k]),U[4][j,k])
+                    wavespd = max(wavespd_i,wavespd_j)
+                    d_ij = wavespd*c_ij_norm
+
+                    for c = 1:Nc
+                        F_low[c][i,j]  = (rxJ*S0r[i,j]*(flux_x[c][i,k]+flux_x[c][j,k]) 
+                                        + syJ*S0s[i,j]*(flux_y[c][i,k]+flux_y[c][j,k])
+                                        - d_ij*(U[c][j,k]-U[c][i,k]))
+                    end
+                end
+            end
+        end
+
+        # High order flux
+        for i = 1:Np-1
+            for j = i+1:Np
+                # TODO: can preallocate nonzero entries
+                if Sr[i,j] != 0 || Ss[i,j] != 0
+                    F1,F2 = euler_fluxes(Ub[1][i,k],Ub[2][i,k],Ub[3][i,k],Ub[4][i,k],Ub[1][j,k],Ub[2][j,k],Ub[3][j,k],Ub[4][j,k])
+                    for c = 1:Nc
+                        val = 2*rxJ*Sr[i,j]*F1[c]+2*syJ*Ss[i,j]*F2[c]
+                        F_high[c][i,j] = val
+                        F_high[c][j,i] = -val
+                    end
+                end
+            end
+        end
+
+        # Calculate interface flux
+        S0r1 = sum(S0r,dims=2)
+        S0s1 = sum(S0s,dims=2)
+        for i = 1:Nfp
+            fidM = mapM[i,k]
+            S0rP = -S0r1[face_idx[i]]
+            S0sP = -S0s1[face_idx[i]]
+            
+            # flux in x direction
+            fidP = mapP_x[i,k]
+            if fidP != 0
+                wavespd_M = wavespeed_1D(U[1][fidM],U[2][fidM],U[4][fidM])
+                wavespd_P = wavespeed_1D(U[1][fidP],U[2][fidP],U[4][fidP])
+                wavespd = max(wavespd_M,wavespd_P)
+                d_ij = wavespd*abs(S0rP)
+                for c = 1:Nc
+                    F_P[c][i] += (rxJ*S0rP*(flux_x[c][fidM]+flux_x[c][fidP])
+                                - d_ij*(U[c][fidP]-U[c][fidM]))
+                end
+            end
+
+            # flux in y direction
+            fidP = mapP_y[i,k]
+            if fidP != 0
+                wavespd_M = wavespeed_1D(U[1][fidM],U[3][fidM],U[4][fidM])
+                wavespd_P = wavespeed_1D(U[1][fidP],U[3][fidP],U[4][fidP])
+                wavespd = max(wavespd_M,wavespd_P)
+                d_ij = wavespd*abs(S0sP)
+                for c = 1:Nc
+                    F_P[c][i] += (syJ*S0sP*(flux_y[c][fidM]+flux_y[c][fidP])
+                                - d_ij*(U[c][fidP]-U[c][fidM]))
+                end
+            end
+        end
+
+        # Calculate low order solution
+        for i = 1:Np
+            for c = 1:Nc
+                U_low[c][i] = sum(F_low[c][i,:])
+            end
+        end
+        # TODO: redundant
+        for i = 1:Nfp
+            for c = 1:Nc
+                U_low[c][face_idx[i]] += F_P[c][i]
+            end
+        end
+        for c = 1:Nc
+            for i = 1:Np
+                U_low[c][i] = U[c][i,k]-dt/J/M[i,i]*U_low[c][i]
+            end
+        end
+
+        # Calculate limiting parameters
+        P_ij = [0.0;0.0;0.0;0.0]
+        for i = 1:Np
+            m_i = J*M[i,i]
+            lambda_j = 1/(Np-1)
+            U_low_i = [U_low[c][i] for c = 1:Nc]
+            for j = 1:Np
+                if i != j
+                    for c = 1:Nc
+                        P_ij[c] = dt/(m_i*lambda_j)*(F_low[c][i,j]-F_high[c][i,j])
+                    end
+                    L[i,j] = limiting_param(U_low_i, P_ij)
+                end
+            end
+        end
+
+        # Symmetrize limiting parameters
+        for i = 1:Np
+            for j = 1:Np
+                if i != j 
+                    l = min(L[i,j],L[j,i])
+                    L[i,j] = l
+                    L[j,i] = l
+                end
+            end
+        end
+
+        L = ones(size(L))
+        # if sum(L)-Np*Np+Np < 0
+        #     @show sum(L)-Np*Np+Np
+        # end
+
+        for c = 1:Nc
+            rhsU[c][:,k] = sum((L.-1).*F_low[c] - L.*F_high[c],dims=2)
+            #rhsU[c][:,k] = sum((-1).*F_high[c],dims=2)
+            #rhsU[c][:,k] = sum((-1).*F_low[c],dims=2)
+            for i = 1:Nfp
+                rhsU[c][face_idx[i],k] -= F_P[c][i]
+            end
+        end
+    end
+
+    for c = 1:Nc
+        rhsU[c] = 1/J*Minv*rhsU[c]
+    end
+
+    return rhsU,dt
+end
+
 
 
 
@@ -812,9 +994,12 @@ end
 "Time integration"
 t = 0.0
 U = collect(U)
+resU = [zeros(size(x)),zeros(size(x)),zeros(size(x)),zeros(size(x))]
+resW = [zeros(size(x)),zeros(size(x)),zeros(size(x)),zeros(size(x))]
+resZ = [zeros(size(x)),zeros(size(x)),zeros(size(x)),zeros(size(x))]
 
 @unpack VDM = rd
-rp,sp = equi_nodes_2D(30)
+rp,sp = equi_nodes_2D(20)
 Vp = vandermonde_2D(N,rp,sp)/VDM
 gr(aspect_ratio=:equal,legend=false,
    markerstrokewidth=0,markersize=2,axis=nothing)
@@ -827,9 +1012,20 @@ anim = Animation()
 i = 1
 
 while t < T
+    #rhsU,dt = rhs_IDP(U,K1D,N,Nfaces,nxJ,nyJ,Minv,Sr,Ss,S0r,S0s,Br,Bs,face_idx,mapM,mapP_x,mapP_y,i)
+    # @. U = U + dt*rhsU
+
+    # SSPRK(3,3)
     rhsU,dt = rhs_IDP(U,K1D,N,Nfaces,nxJ,nyJ,Minv,Sr,Ss,S0r,S0s,Br,Bs,face_idx,mapM,mapP_x,mapP_y,i)
-    @. U = U + dt*rhsU
-    #rhsU,dt,U_low_k = rhs_IDP(U,K1D,N,Nfaces,nxJ,nyJ,Minv,Sr,Ss,S0r,S0s,Br,Bs,face_idx,mapM,mapP_x,mapP_y)
+    dt = min(dt,T-t)
+    @. resW = U + dt*rhsU
+    rhsU,_ = rhs_IDP(U,K1D,N,Nfaces,nxJ,nyJ,Minv,Sr,Ss,S0r,S0s,Br,Bs,face_idx,mapM,mapP_x,mapP_y,i,dt)
+    @. resZ = resW+dt*rhsU
+    @. resW = 3/4*U+1/4*resZ
+    rhsU,_ = rhs_IDP(U,K1D,N,Nfaces,nxJ,nyJ,Minv,Sr,Ss,S0r,S0s,Br,Bs,face_idx,mapM,mapP_x,mapP_y,i,dt)
+    @. resZ = resW+dt*rhsU
+    @. U = 1/3*U+2/3*resZ
+
     push!(dt_hist,dt)
     global t = t + dt
     println("Current time $t with time step size $dt, and final time $T, at step $i")  
@@ -846,7 +1042,7 @@ rhop = Vp*U[1]
 p = pfun_nd.(U[1],U[2],U[3],U[4])
 pp = Vp*p
 #plt = scatter(Vp*x,Vp*y,Vp*U[1],zcolor=Vp*U[1],camera=(0,90))
-plt = scatter(xp,yp,pp,zcolor=pp,camera=(0,90))
+plt = scatter(xp,yp,rhop,zcolor=rhop,camera=(0,90))
 #display(plt)
 savefig(plt,"~/Desktop/tmp.png")
 #gif(anim,"~/Desktop/tmp.gif",fps=15)
