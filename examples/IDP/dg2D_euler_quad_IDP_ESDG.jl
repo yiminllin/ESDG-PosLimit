@@ -418,8 +418,8 @@ function rhs_IDP(U,K1D,N,Nfaces,nxJ,nyJ,Minv,Sr,Ss,S0r,S0s,Br,Bs,face_idx,mapM,m
                     wavespd = max(wavespd_M,wavespd_P)
                     d_ij = wavespd*c_ij_norm
                     for c = 1:Nc
-                        F_P_low[c][fidM,fidP] += (rxJ*S0rP*(flux_x[c][fidM]+flux_x[c][fidP])
-                                                - d_ij*(U[c][fidP]-U[c][fidM]))
+                        F_P_low[c][fidM,fidP] += (Jf*S0rP*(flux_x[c][fidM]+flux_x[c][fidP])
+                                                - Jf*d_ij*(U[c][fidP]-U[c][fidM]))
                     end
                 end
             end
@@ -435,8 +435,8 @@ function rhs_IDP(U,K1D,N,Nfaces,nxJ,nyJ,Minv,Sr,Ss,S0r,S0s,Br,Bs,face_idx,mapM,m
                     wavespd = max(wavespd_M,wavespd_P)
                     d_ij = wavespd*c_ij_norm
                     for c = 1:Nc
-                        F_P_low[c][fidM,fidP] += (syJ*S0sP*(flux_y[c][fidM]+flux_y[c][fidP])
-                                                - d_ij*(U[c][fidP]-U[c][fidM]))
+                        F_P_low[c][fidM,fidP] += (Jf*S0sP*(flux_y[c][fidM]+flux_y[c][fidP])
+                                                - Jf*d_ij*(U[c][fidP]-U[c][fidM]))
                     end
                 end               
             end
@@ -491,11 +491,9 @@ function rhs_IDP(U,K1D,N,Nfaces,nxJ,nyJ,Minv,Sr,Ss,S0r,S0s,Br,Bs,face_idx,mapM,m
         # Low order flux
         for i = 1:Np
             for j = 1:Np
-                c_ij_norm = sqrt(S0r[i,j]^2 + S0s[i,j]^2)
+                c_ij_norm = sqrt(rxJ^2*S0r[i,j]^2+syJ^2*S0s[i,j]^2)
                 if abs(c_ij_norm) >= TOL
-                    n_ij = [S0r[i,j]; S0s[i,j]]./c_ij_norm
-                    #c_ji_norm = sqrt(S0r[j,i]^2 + S0s[j,i]^2)
-                    #n_ji  = [S0r[j,i]; S0s[j,i]]./c_ji_norm
+                    n_ij = [rxJ*S0r[i,j]; syJ*S0s[i,j]]./c_ij_norm
                     wavespd_i = wavespeed_1D(U[1][i,k],(n_ij[1]*U[2][i,k]+n_ij[2]*U[3][i,k]),U[4][i,k])
                     wavespd_j = wavespeed_1D(U[1][j,k],(n_ij[1]*U[2][j,k]+n_ij[2]*U[3][j,k]),U[4][j,k])
                     wavespd = max(wavespd_i,wavespd_j)
@@ -690,11 +688,9 @@ function rhs_IDPlow(U,K1D,N,Nfaces,nxJ,nyJ,Minv,Sr,Ss,S0r,S0s,Br,Bs,face_idx,map
         # TODO: redundant iterations
         for i = 1:Np
             for j = 1:Np
-                c_ij_norm = sqrt(S0r[i,j]^2 + S0s[i,j]^2)
+                c_ij_norm = sqrt(rxJ^2*S0r[i,j]^2+syJ^2*S0s[i,j]^2)
                 if abs(c_ij_norm) >= TOL
-                    n_ij = [S0r[i,j]; S0s[i,j]]./c_ij_norm
-                    #c_ji_norm = sqrt(S0r[j,i]^2 + S0s[j,i]^2)
-                    #n_ji  = [S0r[j,i]; S0s[j,i]]./c_ji_norm
+                    n_ij = [rxJ*S0r[i,j]; syJ*S0s[i,j]]./c_ij_normm
                     wavespd_i = wavespeed_1D(U[1][i,k],(n_ij[1]*U[2][i,k]+n_ij[2]*U[3][i,k]),U[4][i,k])
                     wavespd_j = wavespeed_1D(U[1][j,k],(n_ij[1]*U[2][j,k]+n_ij[2]*U[3][j,k]),U[4][j,k])
                     wavespd = max(wavespd_i,wavespd_j)
@@ -729,8 +725,8 @@ function rhs_IDPlow(U,K1D,N,Nfaces,nxJ,nyJ,Minv,Sr,Ss,S0r,S0s,Br,Bs,face_idx,map
                     wavespd = max(wavespd_M,wavespd_P)
                     d_ij = wavespd*c_ij_norm
                     for c = 1:Nc
-                        F_P_low[c][fidM,fidP] += (rxJ*S0rP*(flux_x[c][fidM]+flux_x[c][fidP])
-                                                - d_ij*(U[c][fidP]-U[c][fidM]))
+                        F_P_low[c][fidM,fidP] += (Jf*S0rP*(flux_x[c][fidM]+flux_x[c][fidP])
+                                                - Jf*d_ij*(U[c][fidP]-U[c][fidM]))
                     end
                 end
             end
@@ -746,8 +742,8 @@ function rhs_IDPlow(U,K1D,N,Nfaces,nxJ,nyJ,Minv,Sr,Ss,S0r,S0s,Br,Bs,face_idx,map
                     wavespd = max(wavespd_M,wavespd_P)
                     d_ij = wavespd*c_ij_norm
                     for c = 1:Nc
-                        F_P_low[c][fidM,fidP] += (syJ*S0sP*(flux_y[c][fidM]+flux_y[c][fidP])
-                                                - d_ij*(U[c][fidP]-U[c][fidM]))
+                        F_P_low[c][fidM,fidP] += (Jf*S0sP*(flux_y[c][fidM]+flux_y[c][fidP])
+                                                - Jf*d_ij*(U[c][fidP]-U[c][fidM]))
                     end
                 end               
             end
@@ -942,6 +938,6 @@ p = pfun_nd.(U[1],U[2],U[3],U[4])
 pp = Vp*p
 #plt = scatter(Vp*x,Vp*y,Vp*U[1],zcolor=Vp*U[1],camera=(0,90))
 plt = scatter(xp,yp,rhop,zcolor=rhop,camera=(0,90))
-#display(plt)
-savefig(plt,"~/Desktop/tmp.png")
+display(plt)
+#savefig(plt,"~/Desktop/tmp.png")
 #gif(anim,"~/Desktop/tmp.gif",fps=15)
