@@ -65,12 +65,12 @@ end
 const TOL = 1e-16
 "Approximation parameters"
 N = 2 # The order of approximation
-K = 800
+K = 50#800
 T = 1.0#3.0
 
 # Becker viscous shocktube
 const γ = 1.4
-const M_0 = 10.0
+const M_0 = 20.0
 const mu = 0.001
 const lambda = 2/3*mu
 const Pr = 3/4
@@ -483,7 +483,7 @@ function rhs_IDP(U,K,N,Mlump_inv,S0,S,wq)
             end
         end 
 
-        #L = ones(size(L))
+        L = ones(size(L))
 
         for c = 1:3
             # With limiting
@@ -676,7 +676,7 @@ while t < T
     # SSPRK(3,3)
     # rhsU,dt,_ = rhs_IDP(U,K,N,Mlump_inv,S0,S,wq)
     # dt = min(dt,T-t)
-    dt = min(1e-4,T)
+    dt = min(1e-5,T)
     rhsU,_ = rhs_IDP(U,K,N,Mlump_inv,S0,S,wq,dt)
     @. resW = U + dt*rhsU
     rhsU,_ = rhs_IDP(resW,K,N,Mlump_inv,S0,S,wq,dt)
