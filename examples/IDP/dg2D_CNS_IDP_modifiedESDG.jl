@@ -977,10 +977,10 @@ while t < T
     dt = min(1e-4,T-t)
     rhsU = rhs_IDP!(U,N,K1D,Minv,Vf,Dr,Ds,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,LIFT,mapP,face_idx,x_idx,y_idx,leftwall,rightwall,vwall,dt,p,VU,flux_x,flux_y,lam,LFc,Ub,sigma_x,sigma_y);
     @. resW = U + dt*rhsU
-    rhsU = rhs_IDP!(U,N,K1D,Minv,Vf,Dr,Ds,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,LIFT,mapP,face_idx,x_idx,y_idx,leftwall,rightwall,vwall,dt,p,VU,flux_x,flux_y,lam,LFc,Ub,sigma_x,sigma_y);
+    rhsU = rhs_IDP!(resW,N,K1D,Minv,Vf,Dr,Ds,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,LIFT,mapP,face_idx,x_idx,y_idx,leftwall,rightwall,vwall,dt,p,VU,flux_x,flux_y,lam,LFc,Ub,sigma_x,sigma_y);
     @. resZ = resW+dt*rhsU
     @. resW = 3/4*U+1/4*resZ
-    rhsU = rhs_IDP!(U,N,K1D,Minv,Vf,Dr,Ds,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,LIFT,mapP,face_idx,x_idx,y_idx,leftwall,rightwall,vwall,dt,p,VU,flux_x,flux_y,lam,LFc,Ub,sigma_x,sigma_y);
+    rhsU = rhs_IDP!(resW,N,K1D,Minv,Vf,Dr,Ds,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,LIFT,mapP,face_idx,x_idx,y_idx,leftwall,rightwall,vwall,dt,p,VU,flux_x,flux_y,lam,LFc,Ub,sigma_x,sigma_y);
     @. resZ = resW+dt*rhsU
     @. U = 1/3*U+2/3*resZ
 

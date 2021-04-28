@@ -1017,10 +1017,10 @@ while t < T
     dt = min(1e-4,T-t)
     rhsU,dt = rhs_IDP(U,K1D,N,Nfaces,nxJ,nyJ,Minv,Sr,Ss,S0r,S0s,Br,Bs,face_idx,mapM,mapP_x,mapP_y,i,dt)
     @. resW = U + dt*rhsU
-    rhsU,_ = rhs_IDP(U,K1D,N,Nfaces,nxJ,nyJ,Minv,Sr,Ss,S0r,S0s,Br,Bs,face_idx,mapM,mapP_x,mapP_y,i,dt)
+    rhsU,_ = rhs_IDP(resW,K1D,N,Nfaces,nxJ,nyJ,Minv,Sr,Ss,S0r,S0s,Br,Bs,face_idx,mapM,mapP_x,mapP_y,i,dt)
     @. resZ = resW+dt*rhsU
     @. resW = 3/4*U+1/4*resZ
-    rhsU,_ = rhs_IDP(U,K1D,N,Nfaces,nxJ,nyJ,Minv,Sr,Ss,S0r,S0s,Br,Bs,face_idx,mapM,mapP_x,mapP_y,i,dt)
+    rhsU,_ = rhs_IDP(resW,K1D,N,Nfaces,nxJ,nyJ,Minv,Sr,Ss,S0r,S0s,Br,Bs,face_idx,mapM,mapP_x,mapP_y,i,dt)
     @. resZ = resW+dt*rhsU
     @. U = 1/3*U+2/3*resZ
 

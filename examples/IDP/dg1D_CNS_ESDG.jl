@@ -431,10 +431,10 @@ while t < T
     dt = min(1e-4,T-t)
     rhsU = rhs_ESDG(U,K,N,Mlump_inv,S)
     @. resW = U + dt*rhsU
-    rhsU = rhs_ESDG(U,K,N,Mlump_inv,S)
+    rhsU = rhs_ESDG(resW,K,N,Mlump_inv,S)
     @. resZ = resW+dt*rhsU
     @. resW = 3/4*U+1/4*resZ
-    rhsU = rhs_ESDG(U,K,N,Mlump_inv,S)
+    rhsU = rhs_ESDG(resW,K,N,Mlump_inv,S)
     @. resZ = resW+dt*rhsU
     @. U = 1/3*U+2/3*resZ
 
