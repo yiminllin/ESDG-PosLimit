@@ -204,7 +204,7 @@ exact_sol = exact_sol_Leblanc
 
 
 
-# # Ignacio - Rarefaction wave 
+# # Ignacio - Rarefaction wave
 # const γ = 7/5
 # const Bl = 0.0
 # const Br = 1.0
@@ -261,7 +261,7 @@ for i = 1:N+1
 end
 Qr0 = S0+1/2*B
 
-# Drop zeros 
+# Drop zeros
 Qr = Matrix(droptol!(sparse(Qr),TOL))
 Qr0 = Matrix(droptol!(sparse(Qr0),TOL))
 B = Matrix(droptol!(sparse(B),TOL))
@@ -298,7 +298,7 @@ rxJ = 1.0
 """Initial condition"""
 rho_x(x) = (x <= xC) ? rhoL : rhoR
 u_x(x) = 0.0
-p_x(x) = (x <= xC) ? pL : pR 
+p_x(x) = (x <= xC) ? pL : pR
 
 
 # rho = @. rho_x(x)
@@ -329,7 +329,7 @@ function limiting_param(U_low, P_ij)
     c = U_low[3]*U_low[1]-1.0/2.0*U_low[2]^2
 
     l_eps_ij = 1.0
-    if b^2-4*a*c >= 0 
+    if b^2-4*a*c >= 0
         r1 = (-b+sqrt(b^2-4*a*c))/(2*a)
         r2 = (-b-sqrt(b^2-4*a*c))/(2*a)
         if r1 > TOL && r2 > TOL
@@ -339,7 +339,7 @@ function limiting_param(U_low, P_ij)
         elseif r2 > TOL && r1 < -TOL
             l_eps_ij = r2
         end
-    end 
+    end
 
     l = min(l,l_eps_ij)
     return l
@@ -433,7 +433,7 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,dt)
         wavespd_r = max(wavespd_arr[end,k],wavespeed_1D(U_right[1],U_right[2],U_right[3]))
 
         for c = 1:3
-            F_low_P[c][1] = flux_lowIDP(U[c][1,k],U_left[c],flux[c][1,k],f_left[c],-0.5,wavespd_l) 
+            F_low_P[c][1] = flux_lowIDP(U[c][1,k],U_left[c],flux[c][1,k],f_left[c],-0.5,wavespd_l)
             F_low_P[c][2] = flux_lowIDP(U[c][end,k],U_right[c],flux[c][end,k],f_right[c],0.5,wavespd_r)
 
             F_high_P[c][1] = F_low_P[c][1]
@@ -455,7 +455,7 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,dt)
             lambda_j = 1/N
             m_i = J*wq[i]
             for j = 1:N+1
-                if i != j 
+                if i != j
                     for c = 1:3
                         P_ij[c] = dt/(m_i*lambda_j)*(F_low[c][i,j]-F_high[c][i,j])
                     end
@@ -463,7 +463,7 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,dt)
                 end
             end
         end
-        
+
         # Symmetrize limiting parameters
         for i = 1:N+1
             for j = 1:N+1
@@ -473,7 +473,7 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,dt)
                     L[j,i] = l_ij
                 end
             end
-        end 
+        end
 
         # elementwise limiting
         l = 1.0
@@ -491,7 +491,7 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,dt)
                     L[j,i] = l
                 end
             end
-        end 
+        end
 
         # construct rhs
         for c = 1:3
@@ -634,7 +634,7 @@ function rhs_high(U,K,N,Mlump_inv,S)
                 end
             end
         end
- 
+
         # Assemble matrix of low and high order algebraic fluxes
         # interface of the element
         U_left   = (k == 1) ? [rhoL; 0.0; pL/(γ-1)]    : [U[1][end,k-1]; U[2][end,k-1]; U[3][end,k-1]]
@@ -645,7 +645,7 @@ function rhs_high(U,K,N,Mlump_inv,S)
         f_right  = (k == K) ? [0.0; pR; 0.0]           : [flux[1][1,k+1]; flux[2][1,k+1]; flux[3][1,k+1]]
         wavespd_l = max(wavespd_arr[1,k],wavespeed_1D(U_left[1],U_left[2],U_left[3]))
         wavespd_r = max(wavespd_arr[end,k],wavespeed_1D(U_right[1],U_right[2],U_right[3]))
-        
+
         tmp = .-euler_fluxes(Ub[1][1,k],Ub[2][1,k],Ub[3][1,k],Ub_left[1],Ub_left[2],Ub_left[3])
         tmp2 = euler_fluxes(Ub[1][end,k],Ub[2][end,k],Ub[3][end,k],Ub_right[1],Ub_right[2],Ub_right[3])
         for c = 1:3
@@ -654,7 +654,7 @@ function rhs_high(U,K,N,Mlump_inv,S)
             F_high_P[c][1] = tmp[c]-wavespd_l/2*(U_left[c]-U[c][1,k])#-euler_fluxes(Ub[c][1,k],Ub_left[c])#flux_high(Ub[c][1,k],Ub_left[c],-0.5)-wavespd_l/2*(Ub_left[c]-Ub[c][1,k])
             F_high_P[c][2] = tmp2[c]-wavespd_r/2*(U_right[c]-U[c][end,k])#euler_fluxes(Ub[c][end,k],Ub_right[c])#flux_high(Ub[c][end,k],Ub_right[c],0.5)-wavespd_r/2*(Ub_right[c]-Ub[c][end,k])
         end
-       
+
         # construct rhs
         for c = 1:3
             # With limiting
@@ -707,12 +707,12 @@ while t < T
     @. U = 1/3*U+2/3*resZ
 
     global t = t + dt
-    println("Current time $t with time step size $dt, and final time $T")  
+    println("Current time $t with time step size $dt, and final time $T")
     if t == T
         break
     end
 
-    # if i % GIFINTERVAL == 0  
+    # if i % GIFINTERVAL == 0
     #     #plot(Vp*x,Vp*U[1])
     #     plot(Vp*x,Vp*U[1])
     #     # ptL = Bl+(Br-Bl)/K/(N+1)/2
@@ -744,13 +744,13 @@ u = U[2]./U[1]
 p = pfun_nd.(U[1],U[2],U[3])
 J = (Br-Bl)/K/2
 
-Linferr = maximum(abs.(exact_rho-rho))/maximum(abs.(rho)) + 
-          maximum(abs.(exact_u-u))/maximum(abs.(u)) + 
-          maximum(abs.(exact_p-p))/maximum(abs.(p)) 
+Linferr = maximum(abs.(exact_rho-rho))/maximum(abs.(rho)) +
+          maximum(abs.(exact_u-u))/maximum(abs.(u)) +
+          maximum(abs.(exact_p-p))/maximum(abs.(p))
 
-L1err = sum(J*abs.(exact_rho-rho))/sum(J*abs.(rho)) + 
-        sum(J*abs.(exact_u-u))/sum(J*abs.(u)) + 
-        sum(J*abs.(exact_p-p))/sum(J*abs.(p)) 
+L1err = sum(J*wq.*abs.(exact_rho-rho))/sum(J*wq.*abs.(rho)) +
+        sum(J*wq.*abs.(exact_u-u))/sum(J*wq.*abs.(u)) +
+        sum(J*wq.*abs.(exact_p-p))/sum(J*wq.*abs.(p))
 println("N = $N, K = $K")
 println("L1 error is $L1err")
 println("Linf error is $Linferr")

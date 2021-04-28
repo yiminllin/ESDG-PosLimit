@@ -198,7 +198,7 @@ for i = 1:N+1
 end
 Qr0 = S0+1/2*B
 
-# Drop zeros 
+# Drop zeros
 Qr = Matrix(droptol!(sparse(Qr),TOL))
 Qr0 = Matrix(droptol!(sparse(Qr0),TOL))
 B = Matrix(droptol!(sparse(B),TOL))
@@ -242,7 +242,7 @@ function bisection_solve_velocity(x,max_iter,tol)
     v_new = (v_L+v_R)/2
     while num_iter < max_iter
         v_new = (v_L+v_R)/2
-        
+
         if abs(f(v_new)) < tol
             return v_new
         elseif sign(f(v_L)) == sign(f(v_new))
@@ -252,7 +252,7 @@ function bisection_solve_velocity(x,max_iter,tol)
         end
         num_iter += 1
     end
-    
+
     return v_new
 end
 
@@ -323,7 +323,7 @@ function rhs_inviscid(U,K,N,Mlump_inv,S)
         f_right  = (k == K) ? [rhoR*uR; rhoR*uR^2+pR; uR*(pR+ER)] : [flux[1][1,k+1]; flux[2][1,k+1]; flux[3][1,k+1]]
         wavespd_l = max(wavespd_arr[1,k],wavespeed_1D(U_left[1],U_left[2],U_left[3]))
         wavespd_r = max(wavespd_arr[end,k],wavespeed_1D(U_right[1],U_right[2],U_right[3]))
-        
+
         F_l = euler_fluxes(Ub[1][1,k],Ub[2][1,k],Ub[3][1,k],Ub_left[1],Ub_left[2],Ub_left[3])
         F_r = euler_fluxes(Ub[1][end,k],Ub[2][end,k],Ub[3][end,k],Ub_right[1],Ub_right[2],Ub_right[3])
         for c = 1:Nc
@@ -376,7 +376,7 @@ function rhs_viscous(U,K,N,Mlump_inv,S)
             Kx[2,3] = (2*mu-lambda)*v2/v4^2
             Kx[3,2] = Kx[2,3]
             Kx[3,3] = -(2*mu-lambda)*v2^2/v4^3+kappa/cv/v4^2
-        
+
             sigma[2][i,k] += Kx[2,2]*VUx[2][i,k] + Kx[2,3]*VUx[3][i,k]
             sigma[3][i,k] += Kx[3,2]*VUx[2][i,k] + Kx[3,3]*VUx[3][i,k]
         end
@@ -386,10 +386,10 @@ function rhs_viscous(U,K,N,Mlump_inv,S)
     sxP = (x->x[mapP]).(sxf)
     sxP[1][1] = sxf[1][1]
     sxP[2][1] = sxf[2][1]
-    sxP[3][1] = sxf[3][1] 
+    sxP[3][1] = sxf[3][1]
     sxP[1][end] = sxf[1][end]
     sxP[2][end] = sxf[2][end]
-    sxP[3][end] = sxf[3][end] 
+    sxP[3][end] = sxf[3][end]
     # strong form, dσ/dx
     penalization(uP,uf) = LIFT*(@. -.5*(uP-uf))
     sigmax = (x->Dr*x).(sigma)
@@ -440,7 +440,7 @@ while t < T
 
     global t = t + dt
     global i = i + 1
-    println("Current time $t with time step size $dt, and final time $T")  
+    println("Current time $t with time step size $dt, and final time $T")
     if mod(i,1000) == 1
         plot(x,U[1])
         # for k = 1:K
@@ -470,13 +470,14 @@ E = U[3]
 p = pfun_nd.(U[1],U[2],U[3])
 J = (Br-Bl)/K/2
 
-Linferr = maximum(abs.(exact_rho-rho))/maximum(abs.(exact_rho)) + 
-          maximum(abs.(exact_u-u))/maximum(abs.(exact_u)) + 
-          maximum(abs.(exact_E-E))/maximum(abs.(exact_E)) 
+Linferr = maximum(abs.(exact_rho-rho))/maximum(abs.(exact_rho)) +
+          maximum(abs.(exact_u-u))/maximum(abs.(exact_u)) +
+          maximum(abs.(exact_E-E))/maximum(abs.(exact_E))
 
-L1err = sum(J*abs.(exact_rho-rho))/sum(J*abs.(exact_rho)) + 
-        sum(J*abs.(exact_u-u))/sum(J*abs.(exact_u)) + 
-        sum(J*abs.(exact_E-E))/sum(J*abs.(exact_E)) 
+L1err = sum(J*wq.*abs.(exact_rho-rho))/sum(J*wq.*abs.(rho)) +
+        sum(J*wq.*abs.(exact_u-u))/sum(J*wq.*abs.(u)) +
+        sum(J*wq.*abs.(exact_E-E))/sum(J*wq.*abs.(E))
+
 println("N = $N, K = $K")
 println("L1 error is $L1err")
 println("Linf error is $Linferr")

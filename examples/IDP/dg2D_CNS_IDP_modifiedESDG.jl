@@ -272,7 +272,7 @@ bottomwall   = mapB[findall(@. abs(yb) < 1e-12)]
 vwall = [leftwall;rightwall]
 
 # Make domain periodic
-@unpack Nfaces,Vf = rd
+@unpack Nfaces,Vf,wq = rd
 @unpack xf,yf,K,mapM,mapP,mapB = md
 LX,LY = (x->maximum(x)-minimum(x)).((VX,VY)) # find lengths of domain
 mapPB = build_periodic_boundary_maps(xf,yf,LX,LY,Nfaces*K,mapM,mapP,mapB)
@@ -1026,10 +1026,10 @@ Linferr = maximum(abs.(exact_rho-rho))/maximum(abs.(rho)) +
           maximum(abs.(exact_E-E))/maximum(abs.(E))
 
 J = J[1] # TODO: assume uniform mesh
-L1err = sum(J.*abs.(exact_rho-rho))/sum(J.*abs.(rho)) +
-        sum(J.*abs.(exact_rhou-rhou))/sum(J.*abs.(rhou)) +
+L1err = sum(J*wq.*abs.(exact_rho-rho))/sum(J*wq.*abs.(rho)) +
+        sum(J*wq.*abs.(exact_rhou-rhou))/sum(J*wq.*abs.(rhou)) +
         #sum(J.*abs.(exact_rhov-rhov))/sum(J.*abs.(rhov).+1e-14) +
-        sum(J.*abs.(exact_E-E))/sum(J.*abs.(E))
+        sum(J*wq.*abs.(exact_E-E))/sum(J*wq.*abs.(E))
 println("N = $N, K = $K")
 println("L1 error is $L1err")
 println("Linf error is $Linferr")

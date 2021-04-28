@@ -86,7 +86,7 @@ mapP[mapB] = mapPB
 @pack! md = mapP
 
 # construct hybridized SBP operators
-@unpack M,Dr,Ds,Vq,Pq,Vf,wf,nrJ,nsJ = rd
+@unpack M,Dr,Ds,Vq,Pq,Vf,wq,wf,nrJ,nsJ = rd
 Qr = Pq'*M*Dr*Pq
 Qs = Pq'*M*Ds*Pq
 Ef = Vf*Pq
@@ -173,7 +173,7 @@ function init_BC_funs(md::MeshData)
         QP[2][leftwall] .= uL
         QP[3][leftwall] .= vL
         QP[4][leftwall] .= rhoL/(2*pL)
-    
+
         QP[1][rightwall] .= Qf[1][rightwall]#rhoR
         QP[2][rightwall] .= Qf[2][rightwall]#rhoR*uR
         QP[3][rightwall] .= Qf[3][rightwall]#rhoR*vR
@@ -549,11 +549,11 @@ function bisection_solve_velocity(x,max_iter,tol)
 
     L_k = kappa/m_0/cv
     f(v) = -x+2*L_k/(γ+1)*(v_0/(v_0-v_1)*log((v_0-v)/(v_0-v_01))-v_1/(v_0-v_1)*log((v-v_1)/(v_01-v_1)))
-    
+
     v_new = (v_L+v_R)/2
     while num_iter < max_iter
         v_new = (v_L+v_R)/2
-        
+
         if abs(f(v_new)) < tol
             return v_new
         elseif sign(f(v_L)) == sign(f(v_new))
@@ -563,7 +563,7 @@ function bisection_solve_velocity(x,max_iter,tol)
         end
         num_iter += 1
     end
-    
+
     return v_new
 end
 
@@ -759,16 +759,16 @@ exact_rho_p = Vp*exact_rho
 # domain = findall(x .<= 0.5)
 # exact_rho,exact_rhou,exact_rhov,exact_E,rho,rhou,rhov,E = (x->x[domain]).((exact_rho,exact_rhou,exact_rhov,exact_E,rho,rhou,rhov,E))
 
-Linferr = maximum(abs.(exact_rho-rho))/maximum(abs.(rho)) + 
-          maximum(abs.(exact_rhou-rhou))/maximum(abs.(rhou)) + 
-          #maximum(abs.(exact_rhov-rhov))/maximum(abs.(rhov).+1e-14) + 
-          maximum(abs.(exact_E-E))/maximum(abs.(E)) 
+Linferr = maximum(abs.(exact_rho-rho))/maximum(abs.(rho)) +
+          maximum(abs.(exact_rhou-rhou))/maximum(abs.(rhou)) +
+          #maximum(abs.(exact_rhov-rhov))/maximum(abs.(rhov).+1e-14) +
+          maximum(abs.(exact_E-E))/maximum(abs.(E))
 
-J = J[1] # TODO: assume uniform mesh    
-L1err = sum(J.*abs.(exact_rho-rho))/sum(J.*abs.(rho)) + 
-        sum(J.*abs.(exact_rhou-rhou))/sum(J.*abs.(rhou)) + 
-        #sum(J.*abs.(exact_rhov-rhov))/sum(J.*abs.(rhov).+1e-14) + 
-        sum(J.*abs.(exact_E-E))/sum(J.*abs.(E)) 
+J = J[1] # TODO: assume uniform mesh
+L1err = sum(J*wq.*abs.(exact_rho-rho))/sum(J*wq.*abs.(rho)) +
+        sum(J*wq.*abs.(exact_rhou-rhou))/sum(J*wq.*abs.(rhou)) +
+        #sum(J.*abs.(exact_rhov-rhov))/sum(J.*abs.(rhov).+1e-14) +
+        sum(J*wq.*abs.(exact_E-E))/sum(J*wq.*abs.(E))
 println("N = $N, K = $K")
 println("L1 error is $L1err")
 println("Linf error is $Linferr")
@@ -778,4 +778,3 @@ yp = Vp*y
 vv = Vp*Q[1]
 scatter(xp,yp,vv,zcolor=vv,camera=(0,90),colorbar=:right)
 #scatter(xp,yp,exact_rho_p,zcolor=exact_rho_p,camera=(0,90),colorbar=:right)
-

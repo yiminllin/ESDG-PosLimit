@@ -145,7 +145,7 @@ for i = 1:N+1
 end
 Qr0 = S0+1/2*B
 
-# Drop zeros 
+# Drop zeros
 Qr = Matrix(droptol!(sparse(Qr),TOL))
 Qr0 = Matrix(droptol!(sparse(Qr0),TOL))
 B = Matrix(droptol!(sparse(B),TOL))
@@ -183,11 +183,11 @@ function bisection_solve_velocity(x,max_iter,tol)
 
     L_k = kappa/m_0/cv
     f(v) = -x+2*L_k/(γ+1)*(v_0/(v_0-v_1)*log((v_0-v)/(v_0-v_01))-v_1/(v_0-v_1)*log((v-v_1)/(v_01-v_1)))
-    
+
     v_new = (v_L+v_R)/2
     while num_iter < max_iter
         v_new = (v_L+v_R)/2
-        
+
         if abs(f(v_new)) < tol
             return v_new
         elseif sign(f(v_L)) == sign(f(v_new))
@@ -197,7 +197,7 @@ function bisection_solve_velocity(x,max_iter,tol)
         end
         num_iter += 1
     end
-    
+
     return v_new
 end
 
@@ -250,7 +250,7 @@ function limiting_param(U_low, P_ij)
     c = U_low[3]*U_low[1]-1.0/2.0*U_low[2]^2
 
     l_eps_ij = 1.0
-    if b^2-4*a*c >= 0 
+    if b^2-4*a*c >= 0
         r1 = (-b+sqrt(b^2-4*a*c))/(2*a)
         r2 = (-b-sqrt(b^2-4*a*c))/(2*a)
         if r1 > TOL && r2 > TOL
@@ -260,7 +260,7 @@ function limiting_param(U_low, P_ij)
         elseif r2 > TOL && r1 < -TOL
             l_eps_ij = r2
         end
-    end 
+    end
 
     l = min(l,l_eps_ij)
     return l
@@ -315,7 +315,7 @@ function rhs_viscous(U,K,N,Mlump_inv,S)
             Kx[2,3] = (2*mu-lambda)*v2/v4^2
             Kx[3,2] = Kx[2,3]
             Kx[3,3] = -(2*mu-lambda)*v2^2/v4^3+kappa/cv/v4^2
-        
+
             sigma[2][i,k] += Kx[2,2]*VUx[2][i,k] + Kx[2,3]*VUx[3][i,k]
             sigma[3][i,k] += Kx[3,2]*VUx[2][i,k] + Kx[3,3]*VUx[3][i,k]
         end
@@ -325,10 +325,10 @@ function rhs_viscous(U,K,N,Mlump_inv,S)
     sxP = (x->x[mapP]).(sxf)
     sxP[1][1] = sxf[1][1]
     sxP[2][1] = sxf[2][1]
-    sxP[3][1] = sxf[3][1] 
+    sxP[3][1] = sxf[3][1]
     sxP[1][end] = sxf[1][end]
     sxP[2][end] = sxf[2][end]
-    sxP[3][end] = sxf[3][end] 
+    sxP[3][end] = sxf[3][end]
     # strong form, dσ/dx
     penalization(uP,uf) = LIFT*(@. -.5*(uP-uf))
     sigmax = (x->Dr*x).(sigma)
@@ -359,7 +359,7 @@ function rhs_IDP(U,K,N,Mlump_inv,S0,S,wq)
     F_high_P    = [zeros(2),zeros(2),zeros(2)]
     L           = zeros(N+1,N+1) # Array of limiting params
     rhsU        = [zeros(N+1,K),zeros(N+1,K),zeros(N+1,K)]
-    
+
     # TODO: redundant!
     _,sigma = rhs_viscous(U,K,N,Mlump_inv,S)
     wavespd_arr = zeros(N+1,K)
@@ -372,7 +372,7 @@ function rhs_IDP(U,K,N,Mlump_inv,S0,S,wq)
     end
 
     L_plot = zeros(N+1,K)
-    
+
     #dt = Inf
     # TODO: hardcoded
     dt = 1e-4
@@ -381,7 +381,7 @@ function rhs_IDP(U,K,N,Mlump_inv,S0,S,wq)
         L = zeros(N+1,N+1)
         for i = 1:N+1
             for j = 1:N+1
-                if i != j 
+                if i != j
                     wavespd = max(wavespd_arr[i,k],wavespd_arr[j,k],beta_arr[i,k],beta_arr[j,k])
                     fluxS = flux_ES(Ub[1][i,k],Ub[2][i,k],Ub[3][i,k],Ub[1][j,k],Ub[2][j,k],Ub[3][j,k],S[i,j])
                     for c = 1:3
@@ -407,7 +407,7 @@ function rhs_IDP(U,K,N,Mlump_inv,S0,S,wq)
         TL = pL/rhoL/(γ-1)/cv
         TR = pR/rhoR/(γ-1)/cv
         sigma_left  = (k == 1) ? [sigma[1][1,1];sigma[2][1,1];sigma[3][1,1]]       : [sigma[1][end,k-1]; sigma[2][end,k-1]; sigma[3][end,k-1]]
-        sigma_right = (k == K) ? [sigma[1][end,k];sigma[2][end,k];sigma[3][end,k]] : [sigma[1][1,k+1]; sigma[2][1,k+1]; sigma[3][1,k+1]] 
+        sigma_right = (k == K) ? [sigma[1][end,k];sigma[2][end,k];sigma[3][end,k]] : [sigma[1][1,k+1]; sigma[2][1,k+1]; sigma[3][1,k+1]]
         wavespd_l = max(wavespd_arr[1,k],wavespeed_1D(U_left[1],U_left[2],U_left[3]),beta_arr[1,k],zhang_wavespd(U_left[1],U_left[2],U_left[3],sigma_left[2],sigma_left[3],p_left))
         wavespd_r = max(wavespd_arr[end,k],wavespeed_1D(U_right[1],U_right[2],U_right[3]),beta_arr[end,k],zhang_wavespd(U_right[1],U_right[2],U_right[3],sigma_right[2],sigma_right[3],p_right))
 
@@ -416,9 +416,9 @@ function rhs_IDP(U,K,N,Mlump_inv,S0,S,wq)
         d_ii_arr[end,k] += wavespd_r
 
         for c = 1:3
-            F_low_P[c][1] = -flux_viscous(sigma[c][1,k],sigma_left[c],-1/2)+flux_lowIDP(U[c][1,k],U_left[c],flux[c][1,k],f_left[c],-0.5,wavespd_l) 
+            F_low_P[c][1] = -flux_viscous(sigma[c][1,k],sigma_left[c],-1/2)+flux_lowIDP(U[c][1,k],U_left[c],flux[c][1,k],f_left[c],-0.5,wavespd_l)
             F_low_P[c][2] = -flux_viscous(sigma[c][end,k],sigma_right[c],1/2)+flux_lowIDP(U[c][end,k],U_right[c],flux[c][end,k],f_right[c],0.5,wavespd_r)
-            
+
             if k == 1
                 F_low_P[c][1] = -flux_viscous(sigma[c][1,k],sigma_left[c],-1/2)-0.5*(flux[c][1,k]+f_left[c])
             end
@@ -464,7 +464,7 @@ function rhs_IDP(U,K,N,Mlump_inv,S0,S,wq)
                 end
             end
         end
-        
+
         # elementwise limiting
         l = 1.0
         for i = 1:N+1
@@ -481,7 +481,7 @@ function rhs_IDP(U,K,N,Mlump_inv,S0,S,wq)
                     L[j,i] = l
                 end
             end
-        end 
+        end
 
         L = ones(size(L))
 
@@ -501,7 +501,7 @@ function rhs_IDP(U,K,N,Mlump_inv,S0,S,wq)
     end
 
     dt = min(dt,minimum(J*wq./d_ii_arr./2.0))
-    
+
     return rhsU,dt,L_plot
 end
 
@@ -526,7 +526,7 @@ function rhs_IDP(U,K,N,Mlump_inv,S0,S,wq,dt)
     F_high_P    = [zeros(2),zeros(2),zeros(2)]
     L           = zeros(N+1,N+1) # Array of limiting params
     rhsU        = [zeros(N+1,K),zeros(N+1,K),zeros(N+1,K)]
-    
+
     # TODO: redundant!
     _,sigma = rhs_viscous(U,K,N,Mlump_inv,S)
     wavespd_arr = zeros(N+1,K)
@@ -539,12 +539,12 @@ function rhs_IDP(U,K,N,Mlump_inv,S0,S,wq,dt)
     end
 
     L_plot = zeros(N+1,K)
-    
+
     for k = 1:K
         L = zeros(N+1,N+1)
         for i = 1:N+1
             for j = 1:N+1
-                if i != j 
+                if i != j
                     wavespd = max(wavespd_arr[i,k],wavespd_arr[j,k],beta_arr[i,k],beta_arr[j,k])
                     fluxS = flux_ES(Ub[1][i,k],Ub[2][i,k],Ub[3][i,k],Ub[1][j,k],Ub[2][j,k],Ub[3][j,k],S[i,j])
                     for c = 1:3
@@ -568,12 +568,12 @@ function rhs_IDP(U,K,N,Mlump_inv,S0,S,wq,dt)
         TL = pL/rhoL/(γ-1)/cv
         TR = pR/rhoR/(γ-1)/cv
         sigma_left  = (k == 1) ? [sigma[1][1,1];sigma[2][1,1];sigma[3][1,1]]       : [sigma[1][end,k-1]; sigma[2][end,k-1]; sigma[3][end,k-1]]
-        sigma_right = (k == K) ? [sigma[1][end,k];sigma[2][end,k];sigma[3][end,k]] : [sigma[1][1,k+1]; sigma[2][1,k+1]; sigma[3][1,k+1]] 
+        sigma_right = (k == K) ? [sigma[1][end,k];sigma[2][end,k];sigma[3][end,k]] : [sigma[1][1,k+1]; sigma[2][1,k+1]; sigma[3][1,k+1]]
         wavespd_l = max(wavespd_arr[1,k],wavespeed_1D(U_left[1],U_left[2],U_left[3]),beta_arr[1,k],zhang_wavespd(U_left[1],U_left[2],U_left[3],sigma_left[2],sigma_left[3],p_left))
         wavespd_r = max(wavespd_arr[end,k],wavespeed_1D(U_right[1],U_right[2],U_right[3]),beta_arr[end,k],zhang_wavespd(U_right[1],U_right[2],U_right[3],sigma_right[2],sigma_right[3],p_right))
 
         for c = 1:3
-            F_low_P[c][1] = -flux_viscous(sigma[c][1,k],sigma_left[c],-1/2)+flux_lowIDP(U[c][1,k],U_left[c],flux[c][1,k],f_left[c],-0.5,wavespd_l) 
+            F_low_P[c][1] = -flux_viscous(sigma[c][1,k],sigma_left[c],-1/2)+flux_lowIDP(U[c][1,k],U_left[c],flux[c][1,k],f_left[c],-0.5,wavespd_l)
             F_low_P[c][2] = -flux_viscous(sigma[c][end,k],sigma_right[c],1/2)+flux_lowIDP(U[c][end,k],U_right[c],flux[c][end,k],f_right[c],0.5,wavespd_r)
 
             F_high_P[c][1] = F_low_P[c][1]
@@ -613,7 +613,7 @@ function rhs_IDP(U,K,N,Mlump_inv,S0,S,wq,dt)
                 end
             end
         end
-        
+
         # elementwise limiting
         l = 1.0
         for i = 1:N+1
@@ -630,8 +630,8 @@ function rhs_IDP(U,K,N,Mlump_inv,S0,S,wq,dt)
                     L[j,i] = l
                 end
             end
-        end 
-        
+        end
+
         # L = ones(size(L))
 
         for c = 1:3
@@ -688,7 +688,7 @@ while t < T
 
     global t = t + dt
     global i = i + 1
-    println("Current time $t with time step size $dt, and final time $T")  
+    println("Current time $t with time step size $dt, and final time $T")
     if mod(i,1000) == 1
         plot(x,U[1])
         # for k = 1:K
@@ -714,13 +714,13 @@ E = U[3]
 p = pfun_nd.(U[1],U[2],U[3])
 J = (Br-Bl)/K/2
 
-Linferr = maximum(abs.(exact_rho-rho))/maximum(abs.(exact_rho)) + 
-          maximum(abs.(exact_u-u))/maximum(abs.(exact_u)) + 
-          maximum(abs.(exact_E-E))/maximum(abs.(exact_E)) 
+Linferr = maximum(abs.(exact_rho-rho))/maximum(abs.(exact_rho)) +
+          maximum(abs.(exact_u-u))/maximum(abs.(exact_u)) +
+          maximum(abs.(exact_E-E))/maximum(abs.(exact_E))
 
-L1err = sum(J*abs.(exact_rho-rho))/sum(J*abs.(exact_rho)) + 
-        sum(J*abs.(exact_u-u))/sum(J*abs.(exact_u)) + 
-        sum(J*abs.(exact_E-E))/sum(J*abs.(exact_E)) 
+L1err = sum(J*wq.*abs.(exact_rho-rho))/sum(J*wq.*abs.(rho)) +
+        sum(J*wq.*abs.(exact_u-u))/sum(J*wq.*abs.(u)) +
+        sum(J*wq.*abs.(exact_E-E))/sum(J*wq.*abs.(E))
 println("N = $N, K = $K")
 println("L1 error is $L1err")
 println("Linf error is $Linferr")
