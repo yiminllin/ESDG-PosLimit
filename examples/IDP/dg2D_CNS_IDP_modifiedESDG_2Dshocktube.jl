@@ -84,7 +84,7 @@ const Nc = 4 # number of components
 "Approximation parameters"
 N = 2
 K1D = 16
-T = 0.3
+T = 0.1
 
 # Initial condition 2D shocktube
 const γ = 1.4
@@ -673,7 +673,7 @@ function rhs_IDP_fixdt!(U,N,K1D,Minv,Vf,Dr,Ds,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,LI
             end
         end
 
-        # L = ones(size(L))
+        L = zeros(size(L))
 
         for c = 1:Nc
             for i = 1:Np
@@ -1023,17 +1023,17 @@ Vp = vandermonde_2D(N,rp,sp)/VDM
 gr(aspect_ratio=:equal,legend=false,
    markerstrokewidth=0,markersize=2)
 
-dt = 1e-4
-rhs_IDP_fixdt!(resW,N,K1D,Minv,Vf,Dr,Ds,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,LIFT,mapP,face_idx,x_idx,y_idx,boundary,nx_b,ny_b,topwall,nx_top,ny_top,wall,nx_wall,ny_wall,dt,VU,flux_x,flux_y,lam,LFc,Ub,sigma_x,sigma_y);
-@btime rhs_IDP_fixdt!(resW,N,K1D,Minv,Vf,Dr,Ds,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,LIFT,mapP,face_idx,x_idx,y_idx,boundary,nx_b,ny_b,topwall,nx_top,ny_top,wall,nx_wall,ny_wall,dt,VU,flux_x,flux_y,lam,LFc,Ub,sigma_x,sigma_y);
-# @profiler rhs_IDP!(U,N,K1D,Minv,Vf,Dr,Ds,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,LIFT,mapP,face_idx,x_idx,y_idx,boundary,nx_b,ny_b,topwall,nx_top,ny_top,wall,nx_wall,ny_wall,dt,VU,flux_x,flux_y,lam,LFc,Ub,sigma_x,sigma_y);
+# dt = 1e-4
+# rhs_IDP_fixdt!(resW,N,K1D,Minv,Vf,Dr,Ds,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,LIFT,mapP,face_idx,x_idx,y_idx,boundary,nx_b,ny_b,topwall,nx_top,ny_top,wall,nx_wall,ny_wall,dt,VU,flux_x,flux_y,lam,LFc,Ub,sigma_x,sigma_y);
+# @btime rhs_IDP_fixdt!(resW,N,K1D,Minv,Vf,Dr,Ds,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,LIFT,mapP,face_idx,x_idx,y_idx,boundary,nx_b,ny_b,topwall,nx_top,ny_top,wall,nx_wall,ny_wall,dt,VU,flux_x,flux_y,lam,LFc,Ub,sigma_x,sigma_y);
+# # @profiler rhs_IDP!(U,N,K1D,Minv,Vf,Dr,Ds,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,LIFT,mapP,face_idx,x_idx,y_idx,boundary,nx_b,ny_b,topwall,nx_top,ny_top,wall,nx_wall,ny_wall,dt,VU,flux_x,flux_y,lam,LFc,Ub,sigma_x,sigma_y);
 
-# dt_hist = []
-# anim = Animation()
-# i = 1
+dt_hist = []
+anim = Animation()
+i = 1
 
-# while t < T
-#     # SSPRK(3,3)
+while t < T
+     # SSPRK(3,3)
 #     # dt = min(1e-4,T-t)
 #     #rhsU = rhs_IDP!(U,N,K1D,Minv,Vf,Dr,Ds,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,LIFT,mapP,face_idx,x_idx,y_idx,boundary,nx_b,ny_b,topwall,nx_top,ny_top,wall,nx_wall,ny_wall,dt,VU,flux_x,flux_y,lam,LFc,Ub,sigma_x,sigma_y);
 #     rhsU,dt = rhs_IDP_vardt!(U,N,K1D,M,Minv,Vf,Dr,Ds,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,LIFT,mapP,face_idx,x_idx,y_idx,boundary,nx_b,ny_b,topwall,nx_top,ny_top,wall,nx_wall,ny_wall,VU,flux_x,flux_y,lam,LFc,Ub,sigma_x,sigma_y);
