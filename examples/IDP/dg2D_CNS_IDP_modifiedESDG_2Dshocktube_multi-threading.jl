@@ -84,7 +84,7 @@ const Nc = 4 # number of components
 "Approximation parameters"
 N = 2
 K1D = 16
-T = 0.2
+T = 0.1
 
 const NUM_THREADS = Threads.nthreads()
 
@@ -385,13 +385,32 @@ sigma_x = zero.(U)
 sigma_y = zero.(U)
 
 
-function zhang_wavespd(rhoL,rhouL,rhovL,EL,sigma2L,sigma3L,sigma4L,pL)
-    uL   = rhouL/rhoL
-    eL   = (EL - .5*rhoL*uL^2)/rhoL
-    tauL = sigma2L
-    qL   = uL*tauL-sigma3L
-    wavespdL = abs(uL)+1/(2*rhoL^2*eL)*(sqrt(rhoL^2*qL^2+2*rhoL^2*eL*abs(tauL-pL)^2)+rhoL*abs(qL))
-    return wavespdL
+# function zhang_wavespd(rhoL,rhouL,rhovL,EL,sigma2L,sigma3L,sigma4L,pL)
+#     uL   = rhouL/rhoL
+#     eL   = (EL - .5*rhoL*uL^2)/rhoL
+#     tauL = sigma2L
+#     qL   = uL*tauL-sigma3L
+#     wavespdL = abs(uL)+1/(2*rhoL^2*eL)*(sqrt(rhoL^2*qL^2+2*rhoL^2*eL*abs(tauL-pL)^2)+rhoL*abs(qL))
+#     return wavespdL
+# end
+
+function zhang_wavespd(rho,rhou,rhov,E,sigmax2,sigmax3,sigmax4,sigmay2,sigmay3,sigmay4,p,nx,ny)
+    u = rhou/rho
+    v = rhov/rho
+    e = (E-.5*rho*(u^2+v^2))/rho
+    tau_xx = sigmax2
+    tau_yx = sigmax3
+    tau_xy = sigmay2
+    tau_yy = sigmay3
+    q_x = u*tau_xx+v*tau_yx-sigmax4
+    q_y = u*tau_xy+v*tau_yy-sigmay4
+
+    v_vec = u*nx+v*ny
+    q_vec = q_x*nx+q_y*ny
+    tau_vec_x = nx*tau_xx+ny*tau_yx
+    tau_vec_y = nx*tau_xy+ny*tau_yy
+
+    return abs(v_vec)+1/(2*rho^2*e)*(sqrt(rho^2*q_vec^2+2*rho^2*e*((tau_vec_x-p*nx)^2+(tau_vec_y-p*ny)^2))+rho*abs(q_vec))
 end
 
 function limiting_param(U_low, P_ij)
@@ -608,10 +627,6 @@ function rhs_IDP_fixdt!(U,N,K1D,Minv,Vf,Dr,Ds,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,LI
 
             # flux in x direction
             if i in x_idx
-                wavespd_M = wavespeed_1D(Uf[1][i,k],Uf[2][i,k],Uf[4][i,k])
-                wavespd_P = wavespeed_1D(UP[1][i,k],UP[2][i,k],UP[4][i,k])
-                wavespd = max(wavespd_M,wavespd_P)
-                d_ij = wavespd*abs(S0r_ij)
                 for c = 1:Nc
                     F_P[c][i,tid] = (Jf*S0r_ij*(flux_x_f[c][i,k]+flux_x_P[c][i,k])
                                     -Jf*S0r_ij*(sxf[c][i,k]+sxP[c][i,k])
@@ -621,10 +636,6 @@ function rhs_IDP_fixdt!(U,N,K1D,Minv,Vf,Dr,Ds,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,LI
 
             # flux in y direction
             if i in y_idx
-                wavespd_M = wavespeed_1D(Uf[1][i,k],Uf[3][i,k],Uf[4][i,k])
-                wavespd_P = wavespeed_1D(UP[1][i,k],UP[3][i,k],UP[4][i,k])
-                wavespd = max(wavespd_M,wavespd_P)
-                d_ij = wavespd*abs(S0s_ij)
                 for c = 1:Nc
                     F_P[c][i,tid] = (Jf*S0s_ij*(flux_y_f[c][i,k]+flux_y_P[c][i,k])
                                     -Jf*S0s_ij*(syf[c][i,k]+syP[c][i,k])
@@ -664,7 +675,7 @@ function rhs_IDP_fixdt!(U,N,K1D,Minv,Vf,Dr,Ds,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,LI
                     for c = 1:Nc
                         P_ij[c,tid] = dt/(m_i*lambda_j)*(F_low[c][i,j,tid]-F_high[c][i,j,tid])
                     end
-                    L[i,j,tid] = limiting_param(U_low_i[:,tid], P_ij) # TODO: rewrite expression
+                    L[i,j,tid] = limiting_param(U_low_i[:,tid], P_ij[:,tid]) # TODO: rewrite expression
                 end
             end
         end
@@ -678,7 +689,7 @@ function rhs_IDP_fixdt!(U,N,K1D,Minv,Vf,Dr,Ds,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,LI
             end
         end
 
-        # L = ones(size(L))
+        #L[:,:,tid] .= 0.0
 
         for c = 1:Nc
             for i = 1:Np
