@@ -106,7 +106,7 @@ const rhouR = rhoR*uR
 const rhovR = rhoR*vR
 const ER    = pR/(γ-1)+.5*rhoR*(uR^2+vR^2)
 const betaR = rhoR/(2*pR)
-const SHOCKSPD = abs(8.25)+sqrt(γ*pL/rhoL)
+const SHOCKSPD = 10.0/cos(pi/6)
 
 
 "Mesh related variables"

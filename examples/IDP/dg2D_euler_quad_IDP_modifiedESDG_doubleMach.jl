@@ -84,7 +84,7 @@ const Nc = 4 # number of components
 "Approximation parameters"
 N = 2
 K1D = 16
-T = 0.1
+T = 0.275
 
 # Initial condition 2D shocktube
 const γ = 1.4
@@ -104,8 +104,7 @@ const rhouR = rhoR*uR
 const rhovR = rhoR*vR
 const ER    = pR/(γ-1)+.5*rhoR*(uR^2+vR^2)
 const betaR = rhoR/(2*pR)
-const SHOCKSPD = abs(8.25)+sqrt(γ*pL/rhoL)
-
+const SHOCKSPD = 10.0/cos(pi/6)
 
 "Mesh related variables"
 VX, VY, EToV = uniform_quad_mesh(4*K1D,K1D)
@@ -775,22 +774,7 @@ while t < T
     global i = i + 1
 
     # if mod(i,100) == 1
-    #     rho = U[1]
-    #     rhou = U[2]
-    #     rhov = U[3]
-    #     E = U[4]
-    #     rx = 4*K1D
-    #     sy = 4*K1D
-    #
-    #     g = sqrt.((rx*Dr*rho).^2 .+ (sy*Ds*rho).^2)
-    #     g_min = minimum(g)
-    #     g_max = maximum(g)
-    #
-    #     xp = Vp*x
-    #     yp = Vp*y
-    #     vv = @. exp(-10*(g-g_min)/(g_max-g_min))
-    #     vv = Vp*vv
-    #     scatter(xp,yp,vv,zcolor=vv,camera=(0,90),colorbar=:right)
+    #     scatter(vec(Vp*x),vec(Vp*y),vec(Vp*U[1]),zcolor=vec(Vp*U[1]),camera=(0,90),colorbar=:right,c=:haline)
     #     frame(anim)
     # end
 end
