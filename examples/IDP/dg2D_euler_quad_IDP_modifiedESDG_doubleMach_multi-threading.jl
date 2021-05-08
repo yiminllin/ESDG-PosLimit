@@ -6,8 +6,8 @@ using SparseArrays
 using BenchmarkTools
 using UnPack
 using StaticArrays
-
-
+using DelimitedFiles
+using CheapThreads
 
 push!(LOAD_PATH, "./src")
 using CommonUtils
@@ -82,9 +82,9 @@ const TOL = 1e-14
 const Nc = 4 # number of components
 
 "Approximation parameters"
-N = 2
-K1D = 16
-T = 0.1
+N = 3
+K1D = 128
+T = 0.275
 
 const NUM_THREADS = Threads.nthreads()
 
@@ -462,6 +462,38 @@ function limiting_param(U_low, P_ij)
     return l
 end
 
+function limiting_param(Ulow_1,Ulow_2,Ulow_3,Ulow_4,Pij_1,Pij_2,Pij_3,Pij_4)
+    l = 1.0
+    # Limit density
+    if Ulow_1 + Pij_1 < -TOL
+        l = min(abs(Ulow_1)/(abs(Pij_1)+1e-14), 1.0)
+    end
+
+    # limiting internal energy (via quadratic function)
+    a = Pij_1*Pij_4-.5*(Pij_2^2+Pij_3^2)
+    b = Ulow_4*Pij_1+Ulow_1*Pij_4-Ulow_2*Pij_2-Ulow_3*Pij_3
+    c = Ulow_4*Ulow_1-.5*(Ulow_2^2+Ulow_3^2)
+
+
+    l_eps_ij = 1.0
+    if b^2-4*a*c >= 0
+        r1 = (-b+sqrt(b^2-4*a*c))/(2*a)
+        r2 = (-b-sqrt(b^2-4*a*c))/(2*a)
+        if r1 > TOL && r2 > TOL
+            l_eps_ij = min(r1,r2)
+        elseif r1 > TOL && r2 < -TOL
+            l_eps_ij = r1
+        elseif r2 > TOL && r1 < -TOL
+            l_eps_ij = r2
+        end
+    end
+
+    l = max(min(l,l_eps_ij), 0.0)
+    return l
+end
+
+
+
 function rhs_IDP_fixdt!(U,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,face_idx,x_idx,y_idx,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,flux_x,flux_y,lam,LFc,Ub,dt,t)
     # TODO: hardcoded!
     K      = size(U[1],2)
@@ -520,7 +552,7 @@ function rhs_IDP_fixdt!(U,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,fac
     F_P      = [zeros(Float64,Nfp,NUM_THREADS) for i = 1:Nc]
     L     = ones(Float64,Np,Np,NUM_THREADS)
     P_ij  = zeros(Float64,Nc,NUM_THREADS)
-
+    
     # =====================
     # Loop through elements
     # =====================
@@ -633,7 +665,8 @@ function rhs_IDP_fixdt!(U,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,fac
                     for c = 1:Nc
                         P_ij[c,tid] = dt/(m_i*lambda_j)*(F_low[c][i,j,tid]-F_high[c][i,j,tid])
                     end
-                    L[i,j,tid] = limiting_param(U_low_i[:,tid], P_ij[:,tid]) # TODO: rewrite expression
+                    #L[i,j,tid] = limiting_param(U_low_i[:,tid], P_ij[:,tid]) # TODO: rewrite expression
+                    L[i,j,tid] = limiting_param(U_low_i[1,tid],U_low_i[2,tid],U_low_i[3,tid],U_low_i[4,tid],P_ij[1,tid],P_ij[2,tid],P_ij[3,tid],P_ij[4,tid])
                 end
             end
         end
@@ -668,7 +701,7 @@ function rhs_IDP_fixdt!(U,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,fac
     for c = 1:Nc
         rhsU[c] .= 1/J*Minv*rhsU[c]
     end
-
+    
     return rhsU
 end
 
@@ -744,18 +777,16 @@ Vp = vandermonde_2D(N,rp,sp)/VDM
 gr(aspect_ratio=:equal,legend=false,
    markerstrokewidth=0,markersize=2)
 
-# dt = 1e-4
-# rhs_IDP_fixdt!(U,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,face_idx,x_idx,y_idx,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,flux_x,flux_y,lam,LFc,Ub,dt,t);
-# @btime rhs_IDP_fixdt!(U,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,face_idx,x_idx,y_idx,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,flux_x,flux_y,lam,LFc,Ub,dt,t);
-# # @profiler rhs_IDP_fixdt!(U,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,face_idx,x_idx,y_idx,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,flux_x,flux_y,lam,LFc,Ub,dt,t);
+#dt = 1e-4
+#@btime rhs_IDP_fixdt!(U,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,face_idx,x_idx,y_idx,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,flux_x,flux_y,lam,LFc,Ub,dt,t);
 
 dt_hist = []
 anim = Animation()
 i = 1
 
-while t < T
+@time while t < T
     # SSPRK(3,3)
-    dt = min(1e-4,T-t)
+    dt = min(1e-5,T-t)
     rhsU = rhs_IDP_fixdt!(U,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,face_idx,x_idx,y_idx,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,flux_x,flux_y,lam,LFc,Ub,dt,t);
     # rhsU,dt = rhs_IDP_vardt!(U,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,face_idx,x_idx,y_idx,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,flux_x,flux_y,lam,LFc,Ub,t);
     # dt = min(dt,T-dt)
@@ -770,14 +801,20 @@ while t < T
     push!(dt_hist,dt)
     global t = t + dt
     println("Current time $t with time step size $dt, and final time $T, at step $i")
+    flush(stdout)
     global i = i + 1
-
-    if mod(i,100) == 1
+    
+    if mod(i,1000) == 1
+        #=
         xp = x
         yp = y
         vv = U[1]
-        scatter(xp,yp,vv,zcolor=vv,camera=(0,90),colorbar=:right)
+        scatter(xp,yp,vv,zcolor=vv,camera=(0,90),colorbar=:right,c=:haline)
         frame(anim)
+        =#
+        open("N=$N,K1D=$K1D,t=$t,dmr.txt","w") do io
+            writedlm(io,U[1])
+        end
     end
 end
 
@@ -785,8 +822,13 @@ end
 ### Plotting ###
 ################
 
-gif(anim,"~/Desktop/tmp.gif",fps=15)
+#gif(anim,"~/Desktop/N=$N,K1D=$K1D,T=$T,doubleMachReflection.gif",fps=10)
 
+open("N=$N,K1D=$K1D,t=$t,dmr.txt","w") do io
+    writedlm(io,U[1])
+end
+
+#=
 rho = U[1]
 rhou = U[2]
 rhov = U[3]
@@ -798,6 +840,7 @@ E = U[4]
 # vv = Vp*U[1]
 # scatter(xp,yp,vv,zcolor=vv,camera=(0,90),colorbar=:right)
 scatter(x,y,rho,zcolor=rho,camera=(0,90),colorbar=:right)
-savefig("/expanse/lustre/scratch/yiminlin/temp_project/N=$N,K1D=$K1D,T=$T,doubleMachReflection.png")
-#savefig("~/Desktop/N=$N,K1D=$K1D,T=$T,doubleMachReflection.png")
+#savefig("/expanse/lustre/scratch/yiminlin/temp_project/N=$N,K1D=$K1D,T=$T,doubleMachReflection.png")
+savefig("~/Desktop/N=$N,K1D=$K1D,T=$T,doubleMachReflection.png")
 #scatter(xp,yp,exact_rho_p,zcolor=exact_rho_p,camera=(0,90),colorbar=:right)
+=#

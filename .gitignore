@@ -13,3 +13,4 @@ demo*.jl
 
 *.png
 *.txt
+*.out
