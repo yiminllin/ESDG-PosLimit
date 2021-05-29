@@ -83,9 +83,11 @@ const Nc = 4 # number of components
 
 "Approximation parameters"
 N = 3
-K1D = 128
-T = 0.275
-
+K1D = 50
+T = 0.2
+dt0 = 4e-6
+XLENGTH = 7/2
+const CFL = 1.0
 const NUM_THREADS = Threads.nthreads()
 
 # Initial condition 2D shocktube
@@ -110,8 +112,8 @@ const SHOCKSPD = 10.0/cos(pi/6)
 
 
 "Mesh related variables"
-VX, VY, EToV = uniform_quad_mesh(4*K1D,K1D)
-@. VX = (VX+1)*2
+VX, VY, EToV = uniform_quad_mesh(Int(round(XLENGTH*K1D)),K1D)
+@. VX = (VX+1)/2*XLENGTH
 @. VY = (VY+1)/2
 
 rd = init_reference_quad(N,gauss_lobatto_quad(0,0,N))
@@ -184,7 +186,7 @@ xb,yb = (x->x[mapB]).((xf,yf))
 
 # 2D shocktube
 inflow   = mapB[findall(@. (abs(xb) < TOL) | ((xb < 1/6) & (abs(yb) < TOL)))]
-outflow  = mapB[findall(@. abs(xb-4.) < TOL)]
+outflow  = mapB[findall(@. abs(xb-XLENGTH) < TOL)]
 topflow  = mapB[findall(@. abs(yb-1.) < TOL)]
 wall     = mapB[findall(@. (xb >= 1/6) & (abs(yb) < TOL))]
 nx_wall  = nxJ[wall]./sJ[wall]
@@ -433,6 +435,7 @@ sigma_x = zero.(U)
 sigma_y = zero.(U)
 
 function limiting_param(U_low, P_ij)
+#=
     l = 1.0
     # Limit density
     if U_low[1] + P_ij[1] < -TOL
@@ -460,9 +463,37 @@ function limiting_param(U_low, P_ij)
 
     l = min(l,l_eps_ij)
     return l
+=#
+    l = 1.0
+    if U_low[1] + P_ij[1] < 0.0
+        l = max(min(abs(U_low[1])/abs(P_ij[1]),1.0),0.0)
+    end
+    a = .5*(P_ij[1]*P_ij[4]+P_ij[4]*P_ij[1]-P_ij[2]^2-P_ij[3]^2)
+    b = U_low[4]*P_ij[1]+U_low[1]*P_ij[4]-U_low[2]*P_ij[2]-U_low[3]*P_ij[3]
+    c = U_low[1]*U_low[4]-.5*(U_low[2]^2+U_low[3]^2)
+
+    l_internal = 1.0
+    if b^2-4*a*c >= 0
+        r1 = (-b+sqrt(b^2-4*a*c))/(2*a)
+        r2 = (-b-sqrt(b^2-4*a*c))/(2*a)
+        if r1 < 0 && r2 < 0
+            l_internal = 1.0
+        elseif r1 > 0 && r2 > 0
+            l_internal = min(min(r1,r2),1.0)
+        elseif r1 >= 0 && r2 < 0
+            l_internal = min(r1,1.0)
+        elseif r2 >= 0 && r1 < 0
+            l_internal = min(r2,1.0)
+        else 
+            l_internal = 0.0
+        end
+    end
+
+    return min(l_internal,l)
 end
 
 function limiting_param(Ulow_1,Ulow_2,Ulow_3,Ulow_4,Pij_1,Pij_2,Pij_3,Pij_4)
+#=
     l = 1.0
     # Limit density
     if Ulow_1 + Pij_1 < -TOL
@@ -490,6 +521,34 @@ function limiting_param(Ulow_1,Ulow_2,Ulow_3,Ulow_4,Pij_1,Pij_2,Pij_3,Pij_4)
 
     l = max(min(l,l_eps_ij), 0.0)
     return l
+=#
+
+    l = 1.0
+    if Ulow_1 + Pij_1 < 0.0
+        l = max(min(abs(Ulow_1)/abs(Pij_1),1.0),0.0)
+    end
+    a = .5*(Pij_1*Pij_4+Pij_4*Pij_1-Pij_2^2-Pij_3^2)
+    b = Ulow_4*Pij_1+Ulow_1*Pij_4-Ulow_2*Pij_2-Ulow_3*Pij_3
+    c = Ulow_1*Ulow_4-.5*(Ulow_2^2+Ulow_3^2)
+
+    l_internal = 1.0
+    if b^2-4*a*c >= 0
+        r1 = (-b+sqrt(b^2-4*a*c))/(2*a)
+        r2 = (-b-sqrt(b^2-4*a*c))/(2*a)
+        if r1 < 0 && r2 < 0
+            l_internal = 1.0
+        elseif r1 > 0 && r2 > 0
+            l_internal = min(min(r1,r2),1.0)
+        elseif r1 >= 0 && r2 < 0
+            l_internal = min(r1,1.0)
+        elseif r2 >= 0 && r1 < 0
+            l_internal = min(r2,1.0)
+        else 
+            l_internal = 1.0
+        end
+    end
+
+    return min(l_internal,l)
 end
 
 
@@ -533,7 +592,7 @@ function rhs_IDP_fixdt!(U,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,fac
     # simple lax friedrichs dissipation
     (rhoM,rhouM,rhovM,EM) = Uf
     rhoUM_n = @. (rhouM*nxJ + rhovM*nyJ)/sJ
-    @. lam  = abs(sqrt(abs(rhoUM_n/rhoM))+sqrt(γ*(γ-1)*(EM-.5*rhoUM_n^2/rhoM)/rhoM))
+    @. lam  = abs(rhoUM_n/rhoM)+sqrt(γ*(γ-1)*(EM-.5*rhoUM_n^2/rhoM)/rhoM)
     lamP = lam[mapP]
     impose_BCs_lam!(lamP,lam,inflow,outflow,topflow,wall)
     @. LFc = max(lam,lamP)*sJ
@@ -656,7 +715,7 @@ function rhs_IDP_fixdt!(U,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,fac
         # Calculate limiting parameters
         for i = 1:Np
             m_i = J/Minv[i,i]
-            lambda_j = 1/(Np-1)
+            lambda_j = 1/4#1/(Np-1)
             for c = 1:Nc
                 U_low_i[c,tid] = U_low[c][i,tid]
             end
@@ -718,6 +777,27 @@ function rhs_IDP_vardt!(U,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,fac
     syJ = 1/K1D/2
     sJ = 1/K1D/2
 
+    p = pfun_nd.(U[1],U[2],U[3],U[4])
+    @. Ub[1] = U[1]
+    @. Ub[2] = U[2]/U[1]
+    @. Ub[3] = U[3]/U[1]
+    @. Ub[4] = U[1]/(2*p)
+    Ubf = (x->Vf*x).(Ub)
+    UbP = (x->x[mapP]).(Ubf)
+    impose_BCs_inviscid_Ub!(UbP,Ubf,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,t)
+
+    Uf = (x->Vf*x).(U)
+    UP = (x->x[mapP]).(Uf)
+    impose_BCs_inviscid_U!(UP,Uf,UbP,xf,inflow,outflow,topflow,wall,t)
+
+    # simple lax friedrichs dissipation
+    (rhoM,rhouM,rhovM,EM) = Uf
+    rhoUM_n = @. (rhouM*nxJ + rhovM*nyJ)/sJ
+    @. lam  = abs(abs(rhoUM_n/rhoM)+sqrt(γ*(γ-1)*(EM-.5*rhoUM_n^2/rhoM)/rhoM))
+    lamP = lam[mapP]
+    impose_BCs_lam!(lamP,lam,inflow,outflow,topflow,wall)
+    @. LFc = max(lam,lamP)*sJ
+
     # =======================
     # Determine timestep size
     # =======================
@@ -742,19 +822,50 @@ function rhs_IDP_vardt!(U,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,fac
             S0r_ij = -S0r1[face_idx[i]]
             S0s_ij = -S0s1[face_idx[i]]
             if i in x_idx
-                d_ii_arr[face_idx[i]] -= LFc[i,k]*abs(S0r_ij)
+                d_ii_arr[face_idx[i],k] -= LFc[i,k]*abs(S0r_ij)
             end
             if i in y_idx
-                d_ii_arr[face_idx[i]] -= LFc[i,k]*abs(S0s_ij)
+                d_ii_arr[face_idx[i],k] -= LFc[i,k]*abs(S0s_ij)
             end
         end
     end
 
-    dt = minimum(-J/2*M*(1 ./d_ii_arr))
-
+    #dt = minimum(-J/2 ./Minv*(1 ./d_ii_arr))
+    dt = Inf
+    for k = 1:K
+        for i = 1:Np
+            dt = min(-J/2/Minv[i,i]/d_ii_arr[i,k],dt)
+        end
+    end
+    
     rhsU = rhs_IDP_fixdt!(U,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,face_idx,x_idx,y_idx,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,flux_x,flux_y,lam,LFc,Ub,dt,t)
     return rhsU,dt
 end
+
+function enforce_BC_timestep!(U,inflow_nodal,topflow_nodal,t)
+    for i = inflow_nodal
+        U[1][i] = rhoL
+        U[2][i] = rhouL
+        U[3][i] = rhovL
+        U[4][i] = EL
+    end
+
+    breakpoint = TOP_INIT+t*SHOCKSPD
+    for i = topflow_nodal
+        if x[i] < breakpoint
+            U[1][i] = rhoL
+            U[2][i] = rhouL
+            U[3][i] = rhovL
+            U[4][i] = EL
+        else
+            U[1][i] = rhoR
+            U[2][i] = rhouR
+            U[3][i] = rhovR
+            U[4][i] = ER
+        end
+    end
+end
+
 
 
 # Time stepping
@@ -777,6 +888,11 @@ Vp = vandermonde_2D(N,rp,sp)/VDM
 gr(aspect_ratio=:equal,legend=false,
    markerstrokewidth=0,markersize=2)
 
+mapN = collect(reshape(1:Np*K,Np,K))
+inflow_nodal = mapN[findall(@. (abs(x) < TOL) | ((x < 1/6) & (abs(y) < TOL)))]
+outflow_nodal = mapN[findall(@. abs(x-XLENGTH) < TOL)]
+topflow_nodal = mapN[findall(@. abs(y-1.) < TOL)]
+
 #dt = 1e-4
 #@btime rhs_IDP_fixdt!(U,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,face_idx,x_idx,y_idx,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,flux_x,flux_y,lam,LFc,Ub,dt,t);
 
@@ -786,17 +902,18 @@ i = 1
 
 @time while t < T
     # SSPRK(3,3)
-    dt = min(1e-5,T-t)
-    rhsU = rhs_IDP_fixdt!(U,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,face_idx,x_idx,y_idx,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,flux_x,flux_y,lam,LFc,Ub,dt,t);
-    # rhsU,dt = rhs_IDP_vardt!(U,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,face_idx,x_idx,y_idx,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,flux_x,flux_y,lam,LFc,Ub,t);
-    # dt = min(dt,T-dt)
+    #dt = min(dt0,T-t)
+    #rhsU = rhs_IDP_fixdt!(U,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,face_idx,x_idx,y_idx,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,flux_x,flux_y,lam,LFc,Ub,dt,t);
+    rhsU,dt = rhs_IDP_vardt!(U,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,face_idx,x_idx,y_idx,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,flux_x,flux_y,lam,LFc,Ub,t);
+    dt = min(CFL*dt,T-t)
     @. resW = U + dt*rhsU
-    rhsU = rhs_IDP_fixdt!(resW,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,face_idx,x_idx,y_idx,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,flux_x,flux_y,lam,LFc,Ub,dt,t);
+    rhsU = rhs_IDP_fixdt!(resW,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,face_idx,x_idx,y_idx,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,flux_x,flux_y,lam,LFc,Ub,dt,t+dt);
     @. resZ = resW+dt*rhsU
     @. resW = 3/4*U+1/4*resZ
-    rhsU = rhs_IDP_fixdt!(resW,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,face_idx,x_idx,y_idx,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,flux_x,flux_y,lam,LFc,Ub,dt,t);
+    rhsU = rhs_IDP_fixdt!(resW,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,face_idx,x_idx,y_idx,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,flux_x,flux_y,lam,LFc,Ub,dt,t+dt/2);
     @. resZ = resW+dt*rhsU
     @. U = 1/3*U+2/3*resZ
+    enforce_BC_timestep!(U,inflow_nodal,topflow_nodal,t+dt)
 
     push!(dt_hist,dt)
     global t = t + dt
@@ -812,8 +929,17 @@ i = 1
         scatter(xp,yp,vv,zcolor=vv,camera=(0,90),colorbar=:right,c=:haline)
         frame(anim)
         =#
-        open("N=$N,K1D=$K1D,t=$t,dmr.txt","w") do io
+        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rho,dmr.txt","w") do io
             writedlm(io,U[1])
+        end
+        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhou,dmr.txt","w") do io
+            writedlm(io,U[2])
+        end
+        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhov,dmr.txt","w") do io
+            writedlm(io,U[3])
+        end
+        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,E,dmr.txt","w") do io
+            writedlm(io,U[4])
         end
     end
 end
@@ -824,10 +950,18 @@ end
 
 #gif(anim,"~/Desktop/N=$N,K1D=$K1D,T=$T,doubleMachReflection.gif",fps=10)
 
-open("N=$N,K1D=$K1D,t=$t,dmr.txt","w") do io
+open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rho,dmr.txt","w") do io
     writedlm(io,U[1])
 end
-
+open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhou,dmr.txt","w") do io
+    writedlm(io,U[2])
+end
+open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhov,dmr.txt","w") do io
+    writedlm(io,U[3])
+end
+open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,E,dmr.txt","w") do io
+    writedlm(io,U[4])
+end
 #=
 rho = U[1]
 rhou = U[2]
