@@ -21,63 +21,67 @@ include("../EntropyStableEuler.jl/src/logmean.jl")
 using EntropyStableEuler
 using EntropyStableEuler.Fluxes2D
 
-function wavespeed_1D(rho,rhou,E)
-    p = pfun_nd(rho,rhou,E)
-    cvel = @. sqrt(γ*p/rho)
-    return @. abs(rhou/rho) + cvel
+@inline function pfun(rho,rhou,E)
+    return (γ-1)*(E-.5*rhou^2/rho)
 end
 
-function pfun_nd(rho, rhou, rhov, E)
-    rhoUnorm2 = (rhou^2+rhov^2)/rho
-    return @. (γ-1)*(E - .5*rhoUnorm2)
+@inline function pfun(rho,rhou,rhov,E)
+    return (γ-1)*(E-.5*(rhou^2+rhov^2)/rho)
 end
 
-function pfun_nd(rho, rhou, E)
-    rhoUnorm2 = (rhou^2)/rho
-    return @. (γ-1)*(E - .5*rhoUnorm2)
+@inline function wavespeed_1D(rho,rhou,E)
+    p = pfun(rho,rhou,E)
+    return abs(rhou/rho) + sqrt(γ*p/rho)
 end
 
-function primitive_to_conservative_hardcode(rho,u,v,p)
-    Unorm = u^2+v^2
-    E = @. p/(γ-1) + .5*rho*Unorm
-    return (rho,rho*u,rho*v,E)
+@inline function logmean(aL,aR,logL,logR)
+
+    # "from: Entropy stable num. approx. for the isothermal and polytropic Euler"
+
+    da = aR-aL;
+    aavg = .5*(aR+aL);
+    f = da/aavg;
+    v = f^2;
+    if abs(f)<1e-4
+        # numbers assume the specific value γ = 1.4
+        return aavg*(1 + v*(-.2-v*(.0512 - v*0.026038857142857)))
+    else
+        return -da/(logL-logR)
+    end
 end
 
-function euler_fluxes_2D(rhoL,uL,vL,betaL,rhologL,betalogL,
-    rhoR,uR,vR,betaR,rhologR,betalogR)
+@inline function euler_fluxes_2D(rhoL,uL,vL,betaL,rhologL,betalogL,
+                                 rhoR,uR,vR,betaR,rhologR,betalogR)
 
-    rholog = logmean.(rhoL,rhoR,rhologL,rhologR)
-    betalog = logmean.(betaL,betaR,betalogL,betalogR)
+    rholog  = logmean(rhoL,rhoR,rhologL,rhologR)
+    betalog = logmean(betaL,betaR,betalogL,betalogR)
 
     # arithmetic avgs
-    rhoavg = (@. .5*(rhoL+rhoR))
-    uavg   = (@. .5*(uL+uR))
-    vavg   = (@. .5*(vL+vR))
+    rhoavg = .5*(rhoL+rhoR)
+    uavg   = .5*(uL+uR)
+    vavg   = .5*(vL+vR)
 
-    unorm = (@. uL*uR + vL*vR)
-    pa    = (@. rhoavg/(betaL+betaR))
-    f4aux = (@. rholog/(2*(γ-1)*betalog) + pa + .5*rholog*unorm)
+    unorm = uL*uR + vL*vR
+    pa    = rhoavg/(betaL+betaR)
+    f4aux = rholog/(2*(γ-1)*betalog) + pa + .5*rholog*unorm
 
-    FxS1 = (@. rholog*uavg)
-    FxS2 = (@. FxS1*uavg + pa)
-    FxS3 = (@. FxS1*vavg)
-    FxS4 = (@. f4aux*uavg)
+    FxS1 = rholog*uavg
+    FxS2 = FxS1*uavg + pa
+    FxS3 = FxS1*vavg
+    FxS4 = f4aux*uavg
 
-    FyS1 = (@. rholog*vavg)
-    FyS2 = (@. FxS3)
-    FyS3 = (@. FyS1*vavg + pa)
-    FyS4 = (@. f4aux*vavg)
-    return (FxS1,FxS2,FxS3,FxS4),(FyS1,FyS2,FyS3,FyS4)
-end
+    FyS1 = rholog*vavg
+    FyS2 = FxS3
+    FyS3 = FyS1*vavg + pa
+    FyS4 = f4aux*vavg
 
-function euler_fluxes(rhoL,uL,vL,betaL,rhoR,uR,vR,betaR)
-    rhologL,betalogL,rhologR,betalogR = map(x->log.(x),(rhoL,betaL,rhoR,betaR))
-    return euler_fluxes_2D(rhoL,uL,vL,betaL,rhologL,betalogL,
-                           rhoR,uR,vR,betaR,rhologR,betalogR)
+    return FxS1,FxS2,FxS3,FxS4,FyS1,FyS2,FyS3,FyS4
 end
 
 
-const TOL = 1e-14
+
+const TOL = 5e-16
+const POSTOL = 1e-14
 const Nc = 4 # number of components
 
 "Approximation parameters"
@@ -176,73 +180,62 @@ S0s = droptol!(sparse(kron(S01D,M1D)),TOL)
 Br = droptol!(sparse(Qr+Qr'),TOL)
 Bs = droptol!(sparse(Qs+Qs'),TOL)
 
-@unpack Vf,Dr,Ds,LIFT = rd
-
-
-md = init_mesh((VX,VY),EToV,rd)
-@unpack rxJ,sxJ,ryJ,syJ,sJ,J,xf,yf,mapM,mapP,mapB,nxJ,nyJ,x,y = md
-xb,yb = (x->x[mapB]).((xf,yf))
-
-# 2D shocktube
-inflow   = mapB[findall(@. (abs(xb) < TOL) | ((xb < 1/6) & (abs(yb) < TOL)))]
-outflow  = mapB[findall(@. abs(xb-XLENGTH) < TOL)]
-topflow  = mapB[findall(@. abs(yb-1.) < TOL)]
-wall     = mapB[findall(@. (xb >= 1/6) & (abs(yb) < TOL))]
-nx_wall  = nxJ[wall]./sJ[wall]
-ny_wall  = nyJ[wall]./sJ[wall]
-const TOP_INIT = (1+sqrt(3)/6)/sqrt(3)
-
-@unpack Nfaces,Vf = rd
-@unpack xf,yf,K,mapM,mapP,mapB = md
-
 function impose_BCs_inviscid_Ub!(UbP,Ubf,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,t)
     # inflow
     for i = inflow
-        UbP[1][i] = rhoL
-        UbP[2][i] = uL
-        UbP[3][i] = vL
-        UbP[4][i] = betaL
+        k = fld1(i,Nfp)
+        j = mod1(i,Nfp)
+        UbP[1,j,k] = rhoL
+        UbP[2,j,k] = uL
+        UbP[3,j,k] = vL
+        UbP[4,j,k] = betaL
     end
 
     # outflow
     for i = outflow
-        UbP[1][i] = Ubf[1][i]
-        UbP[2][i] = Ubf[2][i]
-        UbP[3][i] = Ubf[3][i]
-        UbP[4][i] = Ubf[4][i]
+        k = fld1(i,Nfp)
+        j = mod1(i,Nfp)
+        UbP[1,j,k] = Ubf[1,j,k]
+        UbP[2,j,k] = Ubf[2,j,k]
+        UbP[3,j,k] = Ubf[3,j,k]
+        UbP[4,j,k] = Ubf[4,j,k]
     end
 
     # wall
     for i = 1:length(wall)
         iw = wall[i]
-        u_1 = Ubf[2][iw]
-        u_2 = Ubf[3][iw]
+        kw = fld1(iw,Nfp)
+        jw = mod1(iw,Nfp)
+        u_1 = Ubf[2,jw,kw]
+        u_2 = Ubf[3,jw,kw]
         n_1 = nx_wall[i]
         n_2 = ny_wall[i]
 
         Un = u_1*n_1+u_2*n_2
         Ut = u_1*n_2-u_2*n_1
 
-        UbP[1][iw] = Ubf[1][iw]
-        UbP[4][iw] = Ubf[4][iw]
-
-        UbP[2][iw] = 1/(-n_1^2-n_2^2)*(n_1*Un-n_2*Ut)
-        UbP[3][iw] = 1/(-n_1^2-n_2^2)*(n_2*Un+n_1*Ut)
+        UbP[1,jw,kw] = Ubf[1,jw,kw]
+        UbP[4,jw,kw] = Ubf[4,jw,kw]
+        
+        UbP[2,jw,kw] = 1/(-n_1^2-n_2^2)*(n_1*Un-n_2*Ut)
+        UbP[3,jw,kw] = 1/(-n_1^2-n_2^2)*(n_2*Un+n_1*Ut)
     end
 
     # topflow
     breakpoint = TOP_INIT+t*SHOCKSPD
     for i = topflow
+        k = fld1(i,Nfp)
+        j = mod1(i,Nfp)
         if xf[i] < breakpoint
-            UbP[1][i] = rhoL
-            UbP[2][i] = uL
-            UbP[3][i] = vL
-            UbP[4][i] = betaL 
+            UbP[1,j,k] = rhoL
+            UbP[2,j,k] = uL
+            UbP[3,j,k] = vL
+            UbP[4,j,k] = betaL 
         else
-            UbP[1][i] = rhoR
-            UbP[2][i] = uR
-            UbP[3][i] = vR
-            UbP[4][i] = betaR 
+            UbP[1,j,k] = rhoR
+            UbP[2,j,k] = uR
+            UbP[3,j,k] = vR
+            UbP[4,j,k] = betaR 
         end
     end
 end
@@ -250,48 +243,60 @@ end
 function impose_BCs_inviscid_U!(UP,Uf,UbP,xf,inflow,outflow,topflow,wall,t)
     # inflow
     for i = inflow
-        UP[1][i] = rhoL
-        UP[2][i] = rhouL
-        UP[3][i] = rhovL
-        UP[4][i] = EL
+        k = fld1(i,Nfp)
+        j = mod1(i,Nfp)
+
+        UP[1,j,k] = rhoL
+        UP[2,j,k] = rhouL
+        UP[3,j,k] = rhovL
+        UP[4,j,k] = EL
     end
 
     # outflow
     for i = outflow
-        UP[1][i] = Uf[1][i]
-        UP[2][i] = Uf[2][i]
-        UP[3][i] = Uf[3][i]
-        UP[4][i] = Uf[4][i]
+        k = fld1(i,Nfp)
+        j = mod1(i,Nfp)
+
+        UP[1,j,k] = Uf[1,j,k]
+        UP[2,j,k] = Uf[2,j,k]
+        UP[3,j,k] = Uf[3,j,k]
+        UP[4,j,k] = Uf[4,j,k]
     end
 
     # wall
     for i = wall
-        rho  = UbP[1][i]
-        u    = UbP[2][i]
-        v    = UbP[3][i]
-        beta = UbP[4][i]
+        k = fld1(i,Nfp)
+        j = mod1(i,Nfp)
+
+        rho  = UbP[1,j,k]
+        u    = UbP[2,j,k]
+        v    = UbP[3,j,k]
+        beta = UbP[4,j,k]
         p    = rho/beta/2.0
         E    = p/(γ-1) + .5*rho*(u^2+v^2)
 
-        UP[1][i] = rho
-        UP[2][i] = rho*u
-        UP[3][i] = rho*v
-        UP[4][i] = E
+        UP[1,j,k] = rho
+        UP[2,j,k] = rho*u
+        UP[3,j,k] = rho*v
+        UP[4,j,k] = E
     end
 
     # topflow
     breakpoint = TOP_INIT+t*SHOCKSPD
     for i = topflow
+        k = fld1(i,Nfp)
+        j = mod1(i,Nfp)
+
         if xf[i] < breakpoint
-            UbP[1][i] = rhoL
-            UbP[2][i] = rhouL
-            UbP[3][i] = rhovL
-            UbP[4][i] = EL
+            UbP[1,j,k] = rhoL
+            UbP[2,j,k] = rhouL
+            UbP[3,j,k] = rhovL
+            UbP[4,j,k] = EL
         else
-            UbP[1][i] = rhoR
-            UbP[2][i] = rhouR
-            UbP[3][i] = rhovR
-            UbP[4][i] = ER 
+            UbP[1,j,k] = rhoR
+            UbP[2,j,k] = rhouR
+            UbP[3,j,k] = rhovR
+            UbP[4,j,k] = ER 
         end
     end
 end
@@ -299,165 +304,227 @@ end
 function impose_BCs_flux!(flux_x_P,flux_y_P,flux_x_f,flux_y_f,UbP,xf,inflow,outflow,topflow,wall,t)
     # inflow
     for i = inflow
-        flux_x_P[1][i] = rhoL*uL
-        flux_x_P[2][i] = rhoL*uL^2+pL
-        flux_x_P[3][i] = rhoL*uL*vL
-        flux_x_P[4][i] = uL*(EL+pL)
+        k = fld1(i,Nfp)
+        j = mod1(i,Nfp)
 
-        flux_y_P[1][i] = rhoL*vL
-        flux_y_P[2][i] = rhoL*uL*vL
-        flux_y_P[3][i] = rhoL*vL^2+pL
-        flux_y_P[4][i] = vL*(EL+pL)
+        flux_x_P[1,j,k] = rhoL*uL
+        flux_x_P[2,j,k] = rhoL*uL^2+pL
+        flux_x_P[3,j,k] = rhoL*uL*vL
+        flux_x_P[4,j,k] = uL*(EL+pL)
+        
+        flux_y_P[1,j,k] = rhoL*vL
+        flux_y_P[2,j,k] = rhoL*uL*vL
+        flux_y_P[3,j,k] = rhoL*vL^2+pL
+        flux_y_P[4,j,k] = vL*(EL+pL)
     end
 
     # Outflow
     for i = outflow
-        flux_x_P[1][i] = flux_x_f[1][i]
-        flux_x_P[2][i] = flux_x_f[2][i]
-        flux_x_P[3][i] = flux_x_f[3][i]
-        flux_x_P[4][i] = flux_x_f[4][i]
+        k = fld1(i,Nfp)
+        j = mod1(i,Nfp)
 
-        flux_y_P[1][i] = flux_y_f[1][i]
-        flux_y_P[2][i] = flux_y_f[2][i]
-        flux_y_P[3][i] = flux_y_f[3][i]
-        flux_y_P[4][i] = flux_y_f[4][i]
+        flux_x_P[1,j,k] = flux_x_f[1,j,k]
+        flux_x_P[2,j,k] = flux_x_f[2,j,k]
+        flux_x_P[3,j,k] = flux_x_f[3,j,k]
+        flux_x_P[4,j,k] = flux_x_f[4,j,k]
+        
+        flux_y_P[1,j,k] = flux_y_f[1,j,k]
+        flux_y_P[2,j,k] = flux_y_f[2,j,k]
+        flux_y_P[3,j,k] = flux_y_f[3,j,k]
+        flux_y_P[4,j,k] = flux_y_f[4,j,k]
     end
 
     # wall
     for i = wall
-        rho  = UbP[1][i]
-        u    = UbP[2][i]
-        v    = UbP[3][i]
-        beta = UbP[4][i]
+        k = fld1(i,Nfp)
+        j = mod1(i,Nfp)
+
+        rho  = UbP[1,j,k]
+        u    = UbP[2,j,k]
+        v    = UbP[3,j,k]
+        beta = UbP[4,j,k]
         p    = rho/beta/2.0
         E    = p/(γ-1) + .5*rho*(u^2+v^2)
 
-        flux_x_P[1][i] = rho*u
-        flux_x_P[2][i] = rho*u^2+p
-        flux_x_P[3][i] = rho*u*v
-        flux_x_P[4][i] = u*(E+p)
-
-        flux_y_P[1][i] = rho*v
-        flux_y_P[2][i] = rho*u*v
-        flux_y_P[3][i] = rho*v^2+p
-        flux_y_P[4][i] = v*(E+p)
+        flux_x_P[1,j,k] = rho*u
+        flux_x_P[2,j,k] = rho*u^2+p
+        flux_x_P[3,j,k] = rho*u*v
+        flux_x_P[4,j,k] = u*(E+p)
+        
+        flux_y_P[1,j,k] = rho*v
+        flux_y_P[2,j,k] = rho*u*v
+        flux_y_P[3,j,k] = rho*v^2+p
+        flux_y_P[4,j,k] = v*(E+p)
     end
 
     # topwall
     breakpoint = TOP_INIT+t*SHOCKSPD
     for i = topflow
+        k = fld1(i,Nfp)
+        j = mod1(i,Nfp)
+
         if xf[i] < breakpoint
-            flux_x_P[1][i] = rhoL*uL
-            flux_x_P[2][i] = rhoL*uL^2+pL
-            flux_x_P[3][i] = rhoL*uL*vL
-            flux_x_P[4][i] = uL*(EL+pL)
-    
-            flux_y_P[1][i] = rhoL*vL
-            flux_y_P[2][i] = rhoL*uL*vL
-            flux_y_P[3][i] = rhoL*vL^2+pL
-            flux_y_P[4][i] = vL*(EL+pL)
+            flux_x_P[1,j,k] = rhoL*uL
+            flux_x_P[2,j,k] = rhoL*uL^2+pL
+            flux_x_P[3,j,k] = rhoL*uL*vL
+            flux_x_P[4,j,k] = uL*(EL+pL)
+            
+            flux_y_P[1,j,k] = rhoL*vL
+            flux_y_P[2,j,k] = rhoL*uL*vL
+            flux_y_P[3,j,k] = rhoL*vL^2+pL
+            flux_y_P[4,j,k] = vL*(EL+pL)
         else
-            flux_x_P[1][i] = rhoR*uR
-            flux_x_P[2][i] = rhoR*uR^2+pR
-            flux_x_P[3][i] = rhoR*uR*vR
-            flux_x_P[4][i] = uR*(ER+pR)
-    
-            flux_y_P[1][i] = rhoR*vR
-            flux_y_P[2][i] = rhoR*uR*vR
-            flux_y_P[3][i] = rhoR*vR^2+pR
-            flux_y_P[4][i] = vR*(ER+pR)
+            flux_x_P[1,j,k] = rhoR*uR
+            flux_x_P[2,j,k] = rhoR*uR^2+pR
+            flux_x_P[3,j,k] = rhoR*uR*vR
+            flux_x_P[4,j,k] = uR*(ER+pR)
+            
+            flux_y_P[1,j,k] = rhoR*vR
+            flux_y_P[2,j,k] = rhoR*uR*vR
+            flux_y_P[3,j,k] = rhoR*vR^2+pR
+            flux_y_P[4,j,k] = vR*(ER+pR)
         end
     end
 end
 
 function impose_BCs_lam!(lamP,lam,inflow,outflow,topflow,wall)
     for i = inflow
-        lamP[i] = 0.0
-        lam[i]  = 0.0
+        k = fld1(i,Nfp)
+        j = mod1(i,Nfp)
+
+        lamP[j,k] = 0.0
+        lam[j,k]  = 0.0
     end
 
     for i = outflow 
-        lamP[i] = 0.0
-        lam[i]  = 0.0
+        k = fld1(i,Nfp)
+        j = mod1(i,Nfp)
+
+        lamP[j,k] = 0.0
+        lam[j,k]  = 0.0
     end
 
     for i = wall
-        lamP[i] = 0.0
-        lam[i]  = 0.0
+        k = fld1(i,Nfp)
+        j = mod1(i,Nfp)
+
+        lamP[j,k] = 0.0
+        lam[j,k]  = 0.0
     end
 
     for i = topflow
-        lamP[i] = 0.0
-        lam[i]  = 0.0
+        k = fld1(i,Nfp)
+        j = mod1(i,Nfp)
+
+        lamP[j,k] = 0.0
+        lam[j,k]  = 0.0
     end
 end
 
-function rhs_IDP_fixdt!(U,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,face_idx,x_idx,y_idx,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,flux_x,flux_y,lam,LFc,Ub,dt,t)
-    # TODO: hardcoded!
-    # TODO: previous RHS time 4-5 ms
-    
-    K      = size(U[1],2)
-    Np     = (N+1)*(N+1)
-    Nfaces = 4
-    Nfp    = Nfaces*(N+1)
+function rhs_IDP_fixdt!(U,rhsU,t,prealloc,ops,geom)
+    # TODO: previous RHS time 4.5 ms
+    # TODO: current RHS time 3 ms
+    # TODO: hardcoded variables!
+    f_x,f_y,lam,lamP,LFc,Ubf,UbP,f_x,f_xM,f_xP,f_y,f_yM,f_yP,Uf,UP,rholog,betalog,U_low,F_low,F_high,F_P,L = prealloc
+    S0r,S0s,Sr,Ss,S0r1,S0s1,Minv,MJ_inv,Br_halved,Bs_halved,coeff_arr = ops
+    mapP,Fmask,Fxmask,Fymask,x,y,nxJ,nyJ,sJ,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall = geom
 
-    J = (1/K1D/2)^2 # hardcoded!!
-    Jf = 1/K1D/2
-    rxJ = 1/K1D/2
-    syJ = 1/K1D/2
-    sJ = 1/K1D/2
+    fill!(rhsU,0.0)
+    for k = 1:K
+        for i = 1:Np
+            rho  = U[1,i,k]
+            rhou = U[2,i,k]
+            rhov = U[3,i,k]
+            E    = U[4,i,k]
+            p          = pfun(rho,rhou,rhov,E)
+            f_x[1,i,k] = rhou
+            f_x[2,i,k] = rhou^2/rho+p
+            f_x[3,i,k] = rhou*rhov/rho
+            f_x[4,i,k] = E*rhou/rho+p*rhou/rho
+            f_y[1,i,k] = rhov
+            f_y[2,i,k] = rhou*rhov/rho
+            f_y[3,i,k] = rhov^2/rho+p
+            f_y[4,i,k] = E*rhov/rho+p*rhov/rho
+            rholog[i,k]  = log(rho)
+            betalog[i,k] = log(rho/(2*p))
+        end
 
-    p = pfun_nd.(U[1],U[2],U[3],U[4])
-    #@. p = (γ-1)*(U[4]-.5*(U[2]^2+U[3]^2)/U[1])
-    @. flux_x[1] = U[2]
-    @. flux_x[2] = U[2]^2/U[1]+p
-    @. flux_x[3] = U[2]*U[3]/U[1]
-    @. flux_x[4] = U[4]*U[2]/U[1]+p*U[2]/U[1]
-    @. flux_y[1] = U[3]
-    @. flux_y[2] = U[2]*U[3]/U[1]
-    @. flux_y[3] = U[3]^2/U[1]+p
-    @. flux_y[4] = U[4]*U[3]/U[1]+p*U[3]/U[1]
+        for i = 1:Nfp
+            iM = Fmask[i]
+            rhoM  = U[1,iM,k]
+            rhouM = U[2,iM,k]
+            rhovM = U[3,iM,k]
+            EM    = U[4,iM,k]
+            uM    = rhouM/rhoM
+            vM    = rhovM/rhoM
+            pM    = pfun(rhoM,rhouM,rhovM,EM)
+            rhoUM_n = (rhouM*nxJ[i,k]+rhovM*nyJ[i,k])/sJ
+            lambda  = abs(rhoUM_n/rhoM)+sqrt(γ*(γ-1)*(EM-.5*rhoUM_n^2/rhoM)/rhoM)#wavespeed_1D(rhoM,rhoUM_n,EM)
 
-    @. Ub[1] = U[1]
-    @. Ub[2] = U[2]/U[1]
-    @. Ub[3] = U[3]/U[1]
-    @. Ub[4] = U[1]/(2*p)
-    Ubf = (x->Vf*x).(Ub)
-    UbP = (x->x[mapP]).(Ubf)
+            Ubf[1,i,k] = rhoM
+            Ubf[2,i,k] = uM
+            Ubf[3,i,k] = vM
+            Ubf[4,i,k] = rhoM/(2*pM)
+            Uf[1,i,k] = rhoM
+            Uf[2,i,k] = rhouM
+            Uf[3,i,k] = rhovM
+            Uf[4,i,k] = EM
+            lam[i,k]  = lambda
+
+            f_xM[1,i,k] = f_x[1,iM,k]
+            f_xM[2,i,k] = f_x[2,iM,k]
+            f_xM[3,i,k] = f_x[3,iM,k]
+            f_xM[4,i,k] = f_x[4,iM,k]
+            f_yM[1,i,k] = f_y[1,iM,k]
+            f_yM[2,i,k] = f_y[2,iM,k]
+            f_yM[3,i,k] = f_y[3,iM,k]
+            f_yM[4,i,k] = f_y[4,iM,k]           
+        end
+    end
+
+    for k = 1:K
+        for i = 1:Nfp
+            gP = mapP[i,k]           # exterior global face node number
+            kP = fld1(gP,Nfp)        # exterior element number
+            iP = mod1(gP,Nfp)        # exterior node number
+ 
+            f_xP[1,i,k] = f_xM[1,iP,kP]
+            f_xP[2,i,k] = f_xM[2,iP,kP]
+            f_xP[3,i,k] = f_xM[3,iP,kP]
+            f_xP[4,i,k] = f_xM[4,iP,kP]
+            f_yP[1,i,k] = f_yM[1,iP,kP]
+            f_yP[2,i,k] = f_yM[2,iP,kP]
+            f_yP[3,i,k] = f_yM[3,iP,kP]
+            f_yP[4,i,k] = f_yM[4,iP,kP]
+
+            UbP[1,i,k] = Ubf[1,iP,kP]
+            UbP[2,i,k] = Ubf[2,iP,kP]
+            UbP[3,i,k] = Ubf[3,iP,kP]
+            UbP[4,i,k] = Ubf[4,iP,kP]
+
+            UP[1,i,k] = Uf[1,iP,kP]
+            UP[2,i,k] = Uf[2,iP,kP]
+            UP[3,i,k] = Uf[3,iP,kP]
+            UP[4,i,k] = Uf[4,iP,kP]
+
+            lamP[i,k]  = lam[iP,kP]
+        end
+    end
+
     impose_BCs_inviscid_Ub!(UbP,Ubf,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,t)
-
-    Uf = (x->Vf*x).(U)
-    UP = (x->x[mapP]).(Uf)
     impose_BCs_inviscid_U!(UP,Uf,UbP,xf,inflow,outflow,topflow,wall,t)
-
-    # simple lax friedrichs dissipation
-    (rhoM,rhouM,rhovM,EM) = Uf
-    rhoUM_n = @. (rhouM*nxJ + rhovM*nyJ)/sJ
-    @. lam  = abs(rhoUM_n/rhoM)+sqrt(γ*(γ-1)*(EM-.5*rhoUM_n^2/rhoM)/rhoM)
-    lamP = lam[mapP]
     impose_BCs_lam!(lamP,lam,inflow,outflow,topflow,wall)
     @. LFc = max(lam,lamP)*sJ
-
-    flux_x_f = (x->Vf*x).(flux_x)
-    flux_x_P = (x->x[mapP]).(flux_x_f)
-    flux_y_f = (x->Vf*x).(flux_y)
-    flux_y_P = (x->x[mapP]).(flux_y_f)
-    impose_BCs_flux!(flux_x_P,flux_y_P,flux_x_f,flux_y_f,UbP,xf,inflow,outflow,topflow,wall,t)
-
-    rhsU     = [zeros(Float64,Np,K) for i = 1:Nc]
-    F_low    = [zeros(Float64,Np,Np,NUM_THREADS) for i = 1:Nc]
-    F_P      = [zeros(Float64,Nfp,NUM_THREADS) for i = 1:Nc]
-    
+    impose_BCs_flux!(f_xP,f_yP,f_x,f_y,UbP,xf,inflow,outflow,topflow,wall,t)
+   
     # =====================
     # Loop through elements
     # =====================
     for k = 1:K
         tid = Threads.threadid()
-
-        for c = 1:Nc
-            F_low[c][:,:,tid]  .= 0.0
-            F_P[c][:,tid]      .= 0.0
-        end
+        
+        fill!(F_low,0.0)
+        fill!(F_P,0.0)
 
         # Calculate low order algebraic flux
         for i = 1:Np
@@ -466,15 +533,15 @@ function rhs_IDP_fixdt!(U,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,fac
                 if abs(c_ij_norm) >= TOL
                     n_ij_x = rxJ*S0r[i,j]/c_ij_norm
                     n_ij_y = syJ*S0s[i,j]/c_ij_norm
-                    wavespd_i = wavespeed_1D(U[1][i,k],n_ij_x*U[2][i,k]+n_ij_y*U[3][i,k],U[4][i,k])
-                    wavespd_j = wavespeed_1D(U[1][j,k],n_ij_x*U[2][j,k]+n_ij_y*U[3][j,k],U[4][j,k])
+                    wavespd_i = wavespeed_1D(U[1,i,k],n_ij_x*U[2,i,k]+n_ij_y*U[3,i,k],U[4,i,k])
+                    wavespd_j = wavespeed_1D(U[1,j,k],n_ij_x*U[2,j,k]+n_ij_y*U[3,j,k],U[4,j,k])
                     wavespd = max(wavespd_i,wavespd_j)
                     d_ij = wavespd*c_ij_norm
 
                     for c = 1:Nc
-                        F_low[c][i,j,tid] = (rxJ*S0r[i,j]*(flux_x[c][i,k]+flux_x[c][j,k])
-                                            +syJ*S0s[i,j]*(flux_y[c][i,k]+flux_y[c][j,k])
-                                            -d_ij*(U[c][j,k]-U[c][i,k]))
+                        F_low[c,i,j,tid] = (rxJ*S0r[i,j]*(f_x[c,i,k]+f_x[c,j,k])
+                                           +syJ*S0s[i,j]*(f_y[c,i,k]+f_y[c,j,k])
+                                           -d_ij*(U[c,j,k]-U[c,i,k]))
                     end
                 end
             end
@@ -482,30 +549,30 @@ function rhs_IDP_fixdt!(U,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,fac
 
         # Calculate interface fluxes
         for i = 1:Nfp
-            S0r_ij = -S0r1[face_idx[i]]
-            S0s_ij = -S0s1[face_idx[i]]
+            S0r_ij = -S0r1[Fmask[i]]
+            S0s_ij = -S0s1[Fmask[i]]
 
             # flux in x direction
-            if i in x_idx
-                wavespd_M = wavespeed_1D(Uf[1][i,k],Uf[2][i,k],Uf[4][i,k])
-                wavespd_P = wavespeed_1D(UP[1][i,k],UP[2][i,k],UP[4][i,k])
+            if i in Fxmask
+                wavespd_M = wavespeed_1D(Uf[1,i,k],Uf[2,i,k],Uf[4,i,k])
+                wavespd_P = wavespeed_1D(UP[1,i,k],UP[2,i,k],UP[4,i,k])
                 wavespd = max(wavespd_M,wavespd_P)
                 d_ij = wavespd*abs(S0r_ij)
                 for c = 1:Nc
-                    F_P[c][i,tid] = (Jf*S0r_ij*(flux_x_f[c][i,k]+flux_x_P[c][i,k])
-                                    -LFc[i,k]*abs(S0r_ij)*(UP[c][i,k]-Uf[c][i,k]))
+                    F_P[c,i,tid] = (Jf*S0r_ij*(f_xM[c,i,k]+f_xP[c,i,k])
+                                   -LFc[i,k]*abs(S0r_ij)*(UP[c,i,k]-Uf[c,i,k]))
                 end
             end
 
             # flux in y direction
-            if i in y_idx
-                wavespd_M = wavespeed_1D(Uf[1][i,k],Uf[3][i,k],Uf[4][i,k])
-                wavespd_P = wavespeed_1D(UP[1][i,k],UP[3][i,k],UP[4][i,k])
+            if i in Fymask
+                wavespd_M = wavespeed_1D(Uf[1,i,k],Uf[3,i,k],Uf[4,i,k])
+                wavespd_P = wavespeed_1D(UP[1,i,k],UP[3,i,k],UP[4,i,k])
                 wavespd = max(wavespd_M,wavespd_P)
                 d_ij = wavespd*abs(S0s_ij)
                 for c = 1:Nc
-                    F_P[c][i,tid] = (Jf*S0s_ij*(flux_y_f[c][i,k]+flux_y_P[c][i,k])
-                                    -LFc[i,k]*abs(S0s_ij)*(UP[c][i,k]-Uf[c][i,k]))
+                    F_P[c,i,tid] = (Jf*S0s_ij*(f_yM[c,i,k]+f_yP[c,i,k])
+                                   -LFc[i,k]*abs(S0s_ij)*(UP[c,i,k]-Uf[c,i,k]))
                 end
             end
         end
@@ -513,70 +580,142 @@ function rhs_IDP_fixdt!(U,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,fac
         for c = 1:Nc
             for i = 1:Np
                 for j = 1:Np
-                    rhsU[c][i,k] -= F_low[c][i,j,tid]
+                    rhsU[c,i,k] -= F_low[c,i,j,tid]
                 end
             end
             for i = 1:Nfp
-                rhsU[c][face_idx[i],k] -= F_P[c][i,tid]
+                rhsU[c,Fmask[i],k] -= F_P[c,i,tid]
+            end
+        end
+
+        # if k == 3
+        #     println("==== F_low ====")
+        #     display(F_low[2,:,:,1])
+        #     println("==== F_P ====")
+        #     println(F_P[2,:,1])
+        #     println("==== LFc ====")
+        #     display(LFc[:,k])
+        #     println("==== f_xM ====")
+        #     display(f_xM[:,:,k])
+        #     println("==== f_yM ====")
+        #     display(f_yM[:,:,k])
+        #     println("==== f_xP ====")
+        #     display(f_xP[:,:,k])
+        #     println("==== f_yP ====")
+        #     display(f_yP[:,:,k])
+        #     println("==== UP ====")
+        #     display(UP[:,:,k])
+        #     println("==== Uf ====")
+        #     display(Uf[:,:,k])
+        #     println("==== rhsU ====")
+        #     display(rhsU[2,:,:])
+        # end
+    end
+
+    for k = 1:K
+        for i = 1:Np
+            for c = 1:Nc
+                rhsU[c,i,k] = 1/J*Minv[i,i]*rhsU[c,i,k]
             end
         end
     end
-
-    for c = 1:Nc
-        rhsU[c] .= 1/J*Minv*rhsU[c]
-    end
-    
-    return rhsU
 end
 
-Np = (N+1)*(N+1)
-face_idx = [1:N+1; (N+1):(N+1):Np; Np:-1:Np-N; Np-N:-(N+1):1]
-x_idx    = [(N+2):(2*N+2); (3*N+4):(4*N+4)]
-y_idx    = [1:(N+1); (2*N+3):(3*N+3)]
+@unpack Vf,Dr,Ds,LIFT = rd
+md = init_mesh((VX,VY),EToV,rd)
+@unpack xf,yf,mapM,mapP,mapB,nxJ,nyJ,x,y = md
+xb,yb = (x->x[mapB]).((xf,yf))
+
+const Np = (N+1)*(N+1)
+const K  = size(x,2)
+const Nfaces = 4
+const Nfp    = Nfaces*(N+1)
+const J   = 1.0/K1D/K1D/4
+const Jf  = 1.0/K1D/2
+const rxJ = 2*K1D*J
+const syJ = 2*K1D*J
+const sJ  = Jf
+const rxJ_sq = rxJ^2
+const syJ_sq = syJ^2
+const rxJ_db = 2*rxJ
+const syJ_db = 2*syJ
+MJ_inv    = Minv./J
+Br_halved = -sum(S0r,dims=2)
+Bs_halved = -sum(S0s,dims=2)
+coeff_arr = dt*(Np-1).*Minv*J
+
+
+Fmask  = [1:N+1; (N+1):(N+1):Np; Np:-1:Np-N; Np-N:-(N+1):1]
+Fxmask = [(N+2):(2*N+2); (3*N+4):(4*N+4)]
+Fymask = [1:(N+1); (2*N+3):(3*N+3)]
 S0r1 = sum(S0r,dims=2)
 S0s1 = sum(S0s,dims=2)
-K      = size(x,2)
-Np     = (N+1)*(N+1)
-Nfaces = 4
-Nfp    = Nfaces*(N+1)
+
+# 2D shocktube
+inflow   = mapB[findall(@. (abs(xb) < TOL) | ((xb < 1/6) & (abs(yb) < TOL)))]
+outflow  = mapB[findall(@. abs(xb-XLENGTH) < TOL)]
+topflow  = mapB[findall(@. abs(yb-1.) < TOL)]
+wall     = mapB[findall(@. (xb >= 1/6) & (abs(yb) < TOL))]
+nx_wall  = nxJ[wall]/sJ
+ny_wall  = nyJ[wall]/sJ
+const TOP_INIT = (1+sqrt(3)/6)/sqrt(3)
+
 
 # Initial condition 2D shocktube
 at_left(x,y) = y-sqrt(3)*x+sqrt(3)/6 > 0.0
-U = [zeros(size(x)) for i = 1:Nc]
+U = zeros(Nc,Np,K)
 for k = 1:K
     for i = 1:Np
         if at_left(x[i,k],y[i,k]) 
-            U[1][i,k] = rhoL
-            U[2][i,k] = rhouL
-            U[3][i,k] = rhovL
-            U[4][i,k] = EL
+            U[1,i,k] = rhoL
+            U[2,i,k] = rhouL
+            U[3,i,k] = rhovL
+            U[4,i,k] = EL
         else
-            U[1][i,k] = rhoR
-            U[2][i,k] = rhouR
-            U[3][i,k] = rhovR
-            U[4][i,k] = ER           
+            U[1,i,k] = rhoR
+            U[2,i,k] = rhouR
+            U[3,i,k] = rhovR
+            U[4,i,k] = ER           
         end
     end
 end
 
 # Preallocation
-VU     = zero.(U)
-flux_x = zero.(U)
-flux_y = zero.(U)
-lam    = zeros(Nfp,K)
-LFc    = zeros(Nfp,K)
-Ub     = zero.(U)
-sigma_x = zero.(U)
-sigma_y = zero.(U)
+rhsU   = zeros(Float64,size(U))
+f_x    = zeros(Float64,size(U))
+f_y    = zeros(Float64,size(U))
+lam    = zeros(Float64,Nfp,K)
+lamP   = zeros(Float64,Nfp,K)
+LFc    = zeros(Float64,Nfp,K)
+Ubf    = zeros(Float64,Nc,Nfp,K)
+UbP    = zeros(Float64,Nc,Nfp,K)
+f_xM   = zeros(Float64,Nc,Nfp,K)
+f_xP   = zeros(Float64,Nc,Nfp,K)
+f_yM   = zeros(Float64,Nc,Nfp,K)
+f_yP   = zeros(Float64,Nc,Nfp,K)
+Uf     = zeros(Float64,Nc,Nfp,K)
+UP     = zeros(Float64,Nc,Nfp,K)
+
+rholog  = zeros(Float64,Np,K)
+betalog = zeros(Float64,Np,K)
+U_low   = zeros(Float64,Nc,Np,NUM_THREADS)
+F_low   = zeros(Float64,Nc,Np,Np,NUM_THREADS)
+F_high  = zeros(Float64,Nc,Np,Np,NUM_THREADS)
+F_P     = zeros(Float64,Nc,Nfp,NUM_THREADS)
+L       =  ones(Float64,Np,Np,NUM_THREADS)
+
+prealloc = (f_x,f_y,lam,lamP,LFc,Ubf,UbP,f_x,f_xM,f_xP,f_y,f_yM,f_yP,Uf,UP,rholog,betalog,U_low,F_low,F_high,F_P,L)
+ops      = (S0r,S0s,Sr,Ss,S0r1,S0s1,Minv,MJ_inv,Br_halved,Bs_halved,coeff_arr)
+geom     = (mapP,Fmask,Fxmask,Fymask,x,y,nxJ,nyJ,sJ,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall)
 
 
 # Time stepping
 "Time integration"
 t = 0.0
 U = collect(U)
-resU = [zeros(size(x)),zeros(size(x)),zeros(size(x)),zeros(size(x))]
-resW = [zeros(size(x)),zeros(size(x)),zeros(size(x)),zeros(size(x))]
-resZ = [zeros(size(x)),zeros(size(x)),zeros(size(x)),zeros(size(x))]
+resU = zeros(size(U))
+resW = zeros(size(U))
+resZ = zeros(size(U))
 
 #plotting nodes
 @unpack VDM = rd
@@ -586,34 +725,34 @@ gr(aspect_ratio=:equal,legend=false,
    markerstrokewidth=0,markersize=2)
 
 dt = dt0
-@btime rhs_IDP_fixdt!(U,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,face_idx,x_idx,y_idx,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,flux_x,flux_y,lam,LFc,Ub,dt,t);
+@btime rhs_IDP_fixdt!(U,rhsU,t,prealloc,ops,geom);
+# rhs_IDP_fixdt!(U,rhsU,t,prealloc,ops,geom);
 
-#=
-dt_hist = []
-i = 1
+# dt_hist = []
+# i = 1
 
-@time while t < T
-    # SSPRK(3,3)
-    dt = min(dt0,T-t)
-    rhsU = rhs_IDP_fixdt!(U,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,face_idx,x_idx,y_idx,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,flux_x,flux_y,lam,LFc,Ub,dt,t);
-    @. resW = U + dt*rhsU
-    rhsU = rhs_IDP_fixdt!(resW,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,face_idx,x_idx,y_idx,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,flux_x,flux_y,lam,LFc,Ub,dt,t+dt);
-    @. resZ = resW+dt*rhsU
-    @. resW = 3/4*U+1/4*resZ
-    rhsU = rhs_IDP_fixdt!(resW,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,face_idx,x_idx,y_idx,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,flux_x,flux_y,lam,LFc,Ub,dt,t+dt/2);
-    @. resZ = resW+dt*rhsU
-    @. U = 1/3*U+2/3*resZ
+# @time while t < T
+# #while i < 2
+#     # SSPRK(3,3)
+#     dt = min(dt0,T-t)
+#     rhs_IDP_fixdt!(U,rhsU,t,prealloc,ops,geom);
+#     @. resW = U + dt*rhsU
+#     rhs_IDP_fixdt!(resW,rhsU,t,prealloc,ops,geom);
+#     @. resZ = resW+dt*rhsU
+#     @. resW = 3/4*U+1/4*resZ
+#     rhs_IDP_fixdt!(resW,rhsU,t,prealloc,ops,geom);
+#     @. resZ = resW+dt*rhsU
+#     @. U = 1/3*U+2/3*resZ
 
-    push!(dt_hist,dt)
-    global t = t + dt
-    println("Current time $t with time step size $dt, and final time $T, at step $i")
-    flush(stdout)
-    global i = i + 1
-end
+#     push!(dt_hist,dt)
+#     global t = t + dt
+#     println("Current time $t with time step size $dt, and final time $T, at step $i")
+#     flush(stdout)
+#     global i = i + 1
+# end
 
-xp = Vp*x
-yp = Vp*y
-vv = Vp*U[1]
-scatter(xp,yp,vv,zcolor=vv,camera=(0,90),colorbar=:right)
-savefig("~/Desktop/N=$N,K1D=$K1D,T=$T,doubleMachReflection.png")
-=#
+# xp = Vp*x
+# yp = Vp*y
+# vv = Vp*U[1,:,:]
+# scatter(xp,yp,vv,zcolor=vv,camera=(0,90),colorbar=:right)
+# savefig("~/Desktop/N=$N,K1D=$K1D,T=$T,doubleMachReflection.png")
