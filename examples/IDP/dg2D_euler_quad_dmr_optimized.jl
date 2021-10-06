@@ -78,6 +78,38 @@ end
     return FxS1,FxS2,FxS3,FxS4,FyS1,FyS2,FyS3,FyS4
 end
 
+@inline function limiting_param(rhoL,rhouL,rhovL,EL,rhoP,rhouP,rhovP,EP)
+    # L - low order, P - P_ij
+
+    l = 1.0
+    # Limit density
+    if rhoL + rhoP < -TOL
+        l = max((-rhoL+POSTOL)/rhoP, 0)
+    end
+
+    # limiting internal energy (via quadratic function)
+    a = rhoP*EP-(rhouP^2+rhovP^2)/2.0
+    b = rhoP*EL+rhoL*EP-rhouL*rhouP-rhovL*rhovP
+    c = rhoL*EL-(rhouL^2+rhovL^2)/2.0-POSTOL
+
+    l_eps_ij = 1.0
+    if b^2-4*a*c >= 0
+        r1 = (-b+sqrt(b^2-4*a*c))/(2*a)
+        r2 = (-b-sqrt(b^2-4*a*c))/(2*a)
+        if r1 > TOL && r2 > TOL
+            l_eps_ij = min(r1,r2)
+        elseif r1 > TOL && r2 < -TOL
+            l_eps_ij = r1
+        elseif r2 > TOL && r1 < -TOL
+            l_eps_ij = r2
+        end
+    end
+
+    l = min(l,l_eps_ij)
+    return l
+end
+
+
 
 
 const TOL = 5e-16
@@ -421,12 +453,14 @@ function impose_BCs_lam!(lamP,lam,inflow,outflow,topflow,wall)
     end
 end
 
-function rhs_IDP_fixdt!(U,rhsU,t,prealloc,ops,geom)
-    # TODO: previous RHS time 4.5 ms
-    # TODO: current RHS time 3 ms
+function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
+    # TODO: previous RHS time 12 ms
+    # TODO: current RHS time 5 ms
+    # TODO: optimize boundary condition enforcement
     # TODO: hardcoded variables!
+    # TODO: diagonal matrix to vec
     f_x,f_y,lam,lamP,LFc,Ubf,UbP,f_x,f_xM,f_xP,f_y,f_yM,f_yP,Uf,UP,rholog,betalog,U_low,F_low,F_high,F_P,L = prealloc
-    S0r,S0s,Sr,Ss,S0r1,S0s1,Minv,MJ_inv,Br_halved,Bs_halved,coeff_arr = ops
+    S0r,S0s,Sr,Ss,S0r_sq,S0s_sq,Minv,MJ_inv,Br_halved,Bs_halved,coeff_arr = ops
     mapP,Fmask,Fxmask,Fymask,x,y,nxJ,nyJ,sJ,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall = geom
 
     fill!(rhsU,0.0)
@@ -523,8 +557,11 @@ function rhs_IDP_fixdt!(U,rhsU,t,prealloc,ops,geom)
     for k = 1:K
         tid = Threads.threadid()
         
-        fill!(F_low,0.0)
-        fill!(F_P,0.0)
+        fill!(F_low ,0.0)
+        fill!(F_high,0.0)
+        fill!(F_P   ,0.0)
+        fill!(U_low ,0.0)
+        fill!(L     ,1.0)
 
         # Calculate low order algebraic flux
         for j = 2:Np
@@ -541,8 +578,10 @@ function rhs_IDP_fixdt!(U,rhsU,t,prealloc,ops,geom)
             fy_3_j = f_y[3,j,k]
             fy_4_j = f_y[4,j,k]
             for i = 1:j-1
-                S0r_ij = S0r[i,j]
-                S0s_ij = S0s[i,j]
+                S0r_ij    = S0r[i,j]
+                S0s_ij    = S0s[i,j]
+                S0r_ij_sq = S0r_sq[i,j]
+                S0s_ij_sq = S0s_sq[i,j]
                 rho_i  = U[1,i,k]
                 rhou_i = U[2,i,k]
                 rhov_i = U[3,i,k]
@@ -557,8 +596,8 @@ function rhs_IDP_fixdt!(U,rhsU,t,prealloc,ops,geom)
                 fy_4_i = f_y[4,i,k]
 
                 if S0r_ij != 0 || S0s_ij != 0
-                    # TODO: store S0r_ij^2 
-                    n_ij_norm = sqrt(rxJ_sq*S0r_ij^2+syJ_sq*S0s_ij^2)
+                    # TODO: store n_ij?
+                    n_ij_norm = sqrt(rxJ_sq*S0r_ij_sq+syJ_sq*S0s_ij_sq)
                     # TODO: reuse wavespd?
                     n_ij_x = rxJ*S0r_ij/n_ij_norm
                     n_ij_y = syJ*S0s_ij/n_ij_norm
@@ -593,12 +632,51 @@ function rhs_IDP_fixdt!(U,rhsU,t,prealloc,ops,geom)
             end
         end
 
+        # Calculate high order algebraic flux
+        # TODO: use Ub?
+        for j = 2:Np
+            rho_j     = U[1,j,k]
+            u_j       = U[2,j,k]/rho_j
+            v_j       = U[3,j,k]/rho_j
+            beta_j    = rho_j/(2*pfun(rho_j,rho_j*u_j,rho_j*v_j,U[4,j,k]))
+            rholog_j  = rholog[j,k]
+            betalog_j = betalog[j,k]
+            for i = 1:j-1
+                Sr_ij     = Sr[i,j]
+                Ss_ij     = Ss[i,j]
+                rho_i     = U[1,i,k]
+                u_i       = U[2,i,k]/rho_i
+                v_i       = U[3,i,k]/rho_i
+                beta_i    = rho_i/(2*pfun(rho_i,rho_i*u_i,rho_i*v_i,U[4,i,k]))
+                rholog_i  = rholog[i,k]
+                betalog_i = betalog[i,k]
+                if Sr_ij != 0.0 || Ss_ij != 0.0
+                    Fx1,Fx2,Fx3,Fx4,Fy1,Fy2,Fy3,Fy4 = euler_fluxes_2D(rho_i,u_i,v_i,beta_i,rholog_i,betalog_i,
+                                                                      rho_j,u_j,v_j,beta_j,rholog_j,betalog_j)
+
+                    FH1 = rxJ_db*Sr_ij*Fx1+syJ_db*Ss_ij*Fy1
+                    FH2 = rxJ_db*Sr_ij*Fx2+syJ_db*Ss_ij*Fy2
+                    FH3 = rxJ_db*Sr_ij*Fx3+syJ_db*Ss_ij*Fy3
+                    FH4 = rxJ_db*Sr_ij*Fx4+syJ_db*Ss_ij*Fy4
+
+                    F_high[1,i,j,tid] = FH1
+                    F_high[2,i,j,tid] = FH2
+                    F_high[3,i,j,tid] = FH3
+                    F_high[4,i,j,tid] = FH4
+
+                    F_high[1,j,i,tid] = -FH1
+                    F_high[2,j,i,tid] = -FH2
+                    F_high[3,j,i,tid] = -FH3
+                    F_high[4,j,i,tid] = -FH4
+                end
+            end
+        end
 
         # Calculate interface fluxes
         # TODO: optimize
         for i = 1:Nfp
-            S0r_ij = -S0r1[Fmask[i]]
-            S0s_ij = -S0s1[Fmask[i]]
+            S0r_ij = Br_halved[Fmask[i]]
+            S0s_ij = Bs_halved[Fmask[i]]
 
             # flux in x direction
             if i in Fxmask
@@ -619,10 +697,67 @@ function rhs_IDP_fixdt!(U,rhsU,t,prealloc,ops,geom)
             end
         end
 
+
+        # Calculate low order solution
+        for i = 1:Np
+            for j = 1:Np
+                for c = 1:Nc
+                    U_low[c,i,tid] = U_low[c,i,tid] + F_low[c,i,j,tid]
+                end
+            end
+        end
+
+        for i = 1:Nfp
+            iM = Fmask[i]
+            for c = 1:Nc
+                U_low[c,iM,tid] = U_low[c,iM,tid] + F_P[c,i,tid]
+            end
+        end
+
+        for c = 1:Nc
+            for i = 1:Np
+                U_low[c,i,tid] = U[c,i,k] - dt*MJ_inv[i,i]*U_low[c,i,tid]
+            end
+        end
+
+        # Calculate limiting parameters
+        # TODO: skip diagonal
+        for i = 1:Np
+            coeff = coeff_arr[i,i]
+            rhoL  = U_low[1,i,tid]
+            rhouL = U_low[2,i,tid]
+            rhovL = U_low[3,i,tid]
+            EL    = U_low[4,i,tid]
+            for j = 1:Np
+                if i != j
+                    rhoP  = coeff*(F_low[1,i,j,tid]-F_high[1,i,j,tid])
+                    rhouP = coeff*(F_low[2,i,j,tid]-F_high[2,i,j,tid])
+                    rhovP = coeff*(F_low[3,i,j,tid]-F_high[3,i,j,tid])
+                    EP    = coeff*(F_low[4,i,j,tid]-F_high[4,i,j,tid])
+                    L[i,j,tid] = limiting_param(rhoL,rhouL,rhovL,EL,rhoP,rhouP,rhovP,EP)
+                end
+            end
+        end
+
+        # Elementwise limiting
+        l_e = 1.0
+        for j = 1:Np
+            for i = 1:Np
+                if i != j
+                    l_e = min(l_e,L[i,j,tid])
+                end
+            end
+        end
+        for j = 1:Np
+            for i = 1:Np
+                L[i,j,tid] = l_e
+            end
+        end
+
         for c = 1:Nc
             for i = 1:Np
                 for j = 1:Np
-                    rhsU[c,i,k] -= F_low[c,i,j,tid]
+                    rhsU[c,i,k] = rhsU[c,i,k] + (L[i,j,tid]-1)*F_low[c,i,j,tid]-L[i,j,tid]*F_high[c,i,j,tid]
                 end
             end
             for i = 1:Nfp
@@ -661,14 +796,13 @@ const syJ_db = 2*syJ
 MJ_inv    = Minv./J
 Br_halved = -sum(S0r,dims=2)
 Bs_halved = -sum(S0s,dims=2)
-coeff_arr = dt*(Np-1).*Minv*J
-
+S0r_sq    = S0r.^2
+S0s_sq    = S0s.^2
+coeff_arr = dt0*(Np-1).*Minv/J
 
 Fmask  = [1:N+1; (N+1):(N+1):Np; Np:-1:Np-N; Np-N:-(N+1):1]
 Fxmask = [(N+2):(2*N+2); (3*N+4):(4*N+4)]
 Fymask = [1:(N+1); (2*N+3):(3*N+3)]
-S0r1 = sum(S0r,dims=2)
-S0s1 = sum(S0s,dims=2)
 
 # 2D shocktube
 inflow   = mapB[findall(@. (abs(xb) < TOL) | ((xb < 1/6) & (abs(yb) < TOL)))]
@@ -724,7 +858,7 @@ F_P     = zeros(Float64,Nc,Nfp,NUM_THREADS)
 L       =  ones(Float64,Np,Np,NUM_THREADS)
 
 prealloc = (f_x,f_y,lam,lamP,LFc,Ubf,UbP,f_x,f_xM,f_xP,f_y,f_yM,f_yP,Uf,UP,rholog,betalog,U_low,F_low,F_high,F_P,L)
-ops      = (S0r,S0s,Sr,Ss,S0r1,S0s1,Minv,MJ_inv,Br_halved,Bs_halved,coeff_arr)
+ops      = (S0r,S0s,Sr,Ss,S0r_sq,S0s_sq,Minv,MJ_inv,Br_halved,Bs_halved,coeff_arr)
 geom     = (mapP,Fmask,Fxmask,Fymask,x,y,nxJ,nyJ,sJ,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall)
 
 
@@ -743,35 +877,35 @@ Vp = vandermonde_2D(N,rp,sp)/VDM
 gr(aspect_ratio=:equal,legend=false,
    markerstrokewidth=0,markersize=2)
 
-# dt = dt0
-# @btime rhs_IDP_fixdt!(U,rhsU,t,prealloc,ops,geom);
-# # rhs_IDP_fixdt!(U,rhsU,t,prealloc,ops,geom);
+dt = dt0
+@btime rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom);
+# rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom);
 
-dt_hist = []
-i = 1
+# dt_hist = []
+# i = 1
 
-@time while t < T
-#while i < 2
-    # SSPRK(3,3)
-    dt = min(dt0,T-t)
-    rhs_IDP_fixdt!(U,rhsU,t,prealloc,ops,geom);
-    @. resW = U + dt*rhsU
-    rhs_IDP_fixdt!(resW,rhsU,t,prealloc,ops,geom);
-    @. resZ = resW+dt*rhsU
-    @. resW = 3/4*U+1/4*resZ
-    rhs_IDP_fixdt!(resW,rhsU,t,prealloc,ops,geom);
-    @. resZ = resW+dt*rhsU
-    @. U = 1/3*U+2/3*resZ
+# @time while t < T
+# #while i < 2
+#     # SSPRK(3,3)
+#     dt = min(dt0,T-t)
+#     rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom);
+#     @. resW = U + dt*rhsU
+#     rhs_IDP_fixdt!(resW,rhsU,t,dt,prealloc,ops,geom);
+#     @. resZ = resW+dt*rhsU
+#     @. resW = 3/4*U+1/4*resZ
+#     rhs_IDP_fixdt!(resW,rhsU,t,dt,prealloc,ops,geom);
+#     @. resZ = resW+dt*rhsU
+#     @. U = 1/3*U+2/3*resZ
 
-    push!(dt_hist,dt)
-    global t = t + dt
-    println("Current time $t with time step size $dt, and final time $T, at step $i")
-    flush(stdout)
-    global i = i + 1
-end
+#     push!(dt_hist,dt)
+#     global t = t + dt
+#     println("Current time $t with time step size $dt, and final time $T, at step $i")
+#     flush(stdout)
+#     global i = i + 1
+# end
 
-xp = Vp*x
-yp = Vp*y
-vv = Vp*U[1,:,:]
-scatter(xp,yp,vv,zcolor=vv,camera=(0,90),colorbar=:right)
-savefig("~/Desktop/N=$N,K1D=$K1D,T=$T,doubleMachReflection.png")
+# xp = Vp*x
+# yp = Vp*y
+# vv = Vp*U[1,:,:]
+# scatter(xp,yp,vv,zcolor=vv,camera=(0,90),colorbar=:right)
+# savefig("~/Desktop/N=$N,K1D=$K1D,T=$T,doubleMachReflection.png")
