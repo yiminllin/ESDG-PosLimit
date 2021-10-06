@@ -527,52 +527,94 @@ function rhs_IDP_fixdt!(U,rhsU,t,prealloc,ops,geom)
         fill!(F_P,0.0)
 
         # Calculate low order algebraic flux
-        for i = 1:Np
-            for j = 1:Np
-                c_ij_norm = sqrt(rxJ^2*S0r[i,j]^2+syJ^2*S0s[i,j]^2)
-                if abs(c_ij_norm) >= TOL
-                    n_ij_x = rxJ*S0r[i,j]/c_ij_norm
-                    n_ij_y = syJ*S0s[i,j]/c_ij_norm
-                    wavespd_i = wavespeed_1D(U[1,i,k],n_ij_x*U[2,i,k]+n_ij_y*U[3,i,k],U[4,i,k])
-                    wavespd_j = wavespeed_1D(U[1,j,k],n_ij_x*U[2,j,k]+n_ij_y*U[3,j,k],U[4,j,k])
-                    wavespd = max(wavespd_i,wavespd_j)
-                    d_ij = wavespd*c_ij_norm
+        for j = 2:Np
+            rho_j  = U[1,j,k]
+            rhou_j = U[2,j,k]
+            rhov_j = U[3,j,k]
+            E_j    = U[4,j,k]
+            fx_1_j = f_x[1,j,k]
+            fx_2_j = f_x[2,j,k]
+            fx_3_j = f_x[3,j,k]
+            fx_4_j = f_x[4,j,k]
+            fy_1_j = f_y[1,j,k]
+            fy_2_j = f_y[2,j,k]
+            fy_3_j = f_y[3,j,k]
+            fy_4_j = f_y[4,j,k]
+            for i = 1:j-1
+                S0r_ij = S0r[i,j]
+                S0s_ij = S0s[i,j]
+                rho_i  = U[1,i,k]
+                rhou_i = U[2,i,k]
+                rhov_i = U[3,i,k]
+                E_i    = U[4,i,k]
+                fx_1_i = f_x[1,i,k]
+                fx_2_i = f_x[2,i,k]
+                fx_3_i = f_x[3,i,k]
+                fx_4_i = f_x[4,i,k]
+                fy_1_i = f_y[1,i,k]
+                fy_2_i = f_y[2,i,k]
+                fy_3_i = f_y[3,i,k]
+                fy_4_i = f_y[4,i,k]
 
-                    for c = 1:Nc
-                        F_low[c,i,j,tid] = (rxJ*S0r[i,j]*(f_x[c,i,k]+f_x[c,j,k])
-                                           +syJ*S0s[i,j]*(f_y[c,i,k]+f_y[c,j,k])
-                                           -d_ij*(U[c,j,k]-U[c,i,k]))
-                    end
+                if S0r_ij != 0 || S0s_ij != 0
+                    # TODO: store S0r_ij^2 
+                    n_ij_norm = sqrt(rxJ_sq*S0r_ij^2+syJ_sq*S0s_ij^2)
+                    # TODO: reuse wavespd?
+                    n_ij_x = rxJ*S0r_ij/n_ij_norm
+                    n_ij_y = syJ*S0s_ij/n_ij_norm
+                    λ_i = wavespeed_1D(rho_i,n_ij_x*rhou_i+n_ij_y*rhov_i,E_i)
+                    λ_j = wavespeed_1D(rho_j,n_ij_x*rhou_j+n_ij_y*rhov_j,E_j)
+                    λ_ij = max(λ_i,λ_j)*n_ij_norm
+
+                    FL1 = (rxJ*S0r_ij*(fx_1_i+fx_1_j)
+                          +syJ*S0s_ij*(fy_1_i+fy_1_j)
+                          -λ_ij*(rho_j-rho_i) )
+                    FL2 = (rxJ*S0r_ij*(fx_2_i+fx_2_j)
+                          +syJ*S0s_ij*(fy_2_i+fy_2_j)
+                          -λ_ij*(rhou_j-rhou_i) )
+                    FL3 = (rxJ*S0r_ij*(fx_3_i+fx_3_j)
+                          +syJ*S0s_ij*(fy_3_i+fy_3_j)
+                          -λ_ij*(rhov_j-rhov_i) )                    
+                    FL4 = (rxJ*S0r_ij*(fx_4_i+fx_4_j)
+                          +syJ*S0s_ij*(fy_4_i+fy_4_j)
+                          -λ_ij*(E_j-E_i) )
+
+ 
+                    F_low[1,i,j,tid] = FL1
+                    F_low[2,i,j,tid] = FL2
+                    F_low[3,i,j,tid] = FL3
+                    F_low[4,i,j,tid] = FL4
+
+                    F_low[1,j,i,tid] = -FL1
+                    F_low[2,j,i,tid] = -FL2
+                    F_low[3,j,i,tid] = -FL3
+                    F_low[4,j,i,tid] = -FL4
                 end
             end
         end
 
+
         # Calculate interface fluxes
+        # TODO: optimize
         for i = 1:Nfp
             S0r_ij = -S0r1[Fmask[i]]
             S0s_ij = -S0s1[Fmask[i]]
 
             # flux in x direction
             if i in Fxmask
-                wavespd_M = wavespeed_1D(Uf[1,i,k],Uf[2,i,k],Uf[4,i,k])
-                wavespd_P = wavespeed_1D(UP[1,i,k],UP[2,i,k],UP[4,i,k])
-                wavespd = max(wavespd_M,wavespd_P)
-                d_ij = wavespd*abs(S0r_ij)
+                d_ij = LFc[i,k]*abs(S0r_ij)
                 for c = 1:Nc
                     F_P[c,i,tid] = (Jf*S0r_ij*(f_xM[c,i,k]+f_xP[c,i,k])
-                                   -LFc[i,k]*abs(S0r_ij)*(UP[c,i,k]-Uf[c,i,k]))
+                                   -d_ij*(UP[c,i,k]-Uf[c,i,k]))
                 end
             end
 
             # flux in y direction
             if i in Fymask
-                wavespd_M = wavespeed_1D(Uf[1,i,k],Uf[3,i,k],Uf[4,i,k])
-                wavespd_P = wavespeed_1D(UP[1,i,k],UP[3,i,k],UP[4,i,k])
-                wavespd = max(wavespd_M,wavespd_P)
-                d_ij = wavespd*abs(S0s_ij)
+                d_ij = LFc[i,k]*abs(S0s_ij)
                 for c = 1:Nc
                     F_P[c,i,tid] = (Jf*S0s_ij*(f_yM[c,i,k]+f_yP[c,i,k])
-                                   -LFc[i,k]*abs(S0s_ij)*(UP[c,i,k]-Uf[c,i,k]))
+                                   -d_ij*(UP[c,i,k]-Uf[c,i,k]))
                 end
             end
         end
@@ -587,29 +629,6 @@ function rhs_IDP_fixdt!(U,rhsU,t,prealloc,ops,geom)
                 rhsU[c,Fmask[i],k] -= F_P[c,i,tid]
             end
         end
-
-        # if k == 3
-        #     println("==== F_low ====")
-        #     display(F_low[2,:,:,1])
-        #     println("==== F_P ====")
-        #     println(F_P[2,:,1])
-        #     println("==== LFc ====")
-        #     display(LFc[:,k])
-        #     println("==== f_xM ====")
-        #     display(f_xM[:,:,k])
-        #     println("==== f_yM ====")
-        #     display(f_yM[:,:,k])
-        #     println("==== f_xP ====")
-        #     display(f_xP[:,:,k])
-        #     println("==== f_yP ====")
-        #     display(f_yP[:,:,k])
-        #     println("==== UP ====")
-        #     display(UP[:,:,k])
-        #     println("==== Uf ====")
-        #     display(Uf[:,:,k])
-        #     println("==== rhsU ====")
-        #     display(rhsU[2,:,:])
-        # end
     end
 
     for k = 1:K
@@ -724,35 +743,35 @@ Vp = vandermonde_2D(N,rp,sp)/VDM
 gr(aspect_ratio=:equal,legend=false,
    markerstrokewidth=0,markersize=2)
 
-dt = dt0
-@btime rhs_IDP_fixdt!(U,rhsU,t,prealloc,ops,geom);
-# rhs_IDP_fixdt!(U,rhsU,t,prealloc,ops,geom);
+# dt = dt0
+# @btime rhs_IDP_fixdt!(U,rhsU,t,prealloc,ops,geom);
+# # rhs_IDP_fixdt!(U,rhsU,t,prealloc,ops,geom);
 
-# dt_hist = []
-# i = 1
+dt_hist = []
+i = 1
 
-# @time while t < T
-# #while i < 2
-#     # SSPRK(3,3)
-#     dt = min(dt0,T-t)
-#     rhs_IDP_fixdt!(U,rhsU,t,prealloc,ops,geom);
-#     @. resW = U + dt*rhsU
-#     rhs_IDP_fixdt!(resW,rhsU,t,prealloc,ops,geom);
-#     @. resZ = resW+dt*rhsU
-#     @. resW = 3/4*U+1/4*resZ
-#     rhs_IDP_fixdt!(resW,rhsU,t,prealloc,ops,geom);
-#     @. resZ = resW+dt*rhsU
-#     @. U = 1/3*U+2/3*resZ
+@time while t < T
+#while i < 2
+    # SSPRK(3,3)
+    dt = min(dt0,T-t)
+    rhs_IDP_fixdt!(U,rhsU,t,prealloc,ops,geom);
+    @. resW = U + dt*rhsU
+    rhs_IDP_fixdt!(resW,rhsU,t,prealloc,ops,geom);
+    @. resZ = resW+dt*rhsU
+    @. resW = 3/4*U+1/4*resZ
+    rhs_IDP_fixdt!(resW,rhsU,t,prealloc,ops,geom);
+    @. resZ = resW+dt*rhsU
+    @. U = 1/3*U+2/3*resZ
 
-#     push!(dt_hist,dt)
-#     global t = t + dt
-#     println("Current time $t with time step size $dt, and final time $T, at step $i")
-#     flush(stdout)
-#     global i = i + 1
-# end
+    push!(dt_hist,dt)
+    global t = t + dt
+    println("Current time $t with time step size $dt, and final time $T, at step $i")
+    flush(stdout)
+    global i = i + 1
+end
 
-# xp = Vp*x
-# yp = Vp*y
-# vv = Vp*U[1,:,:]
-# scatter(xp,yp,vv,zcolor=vv,camera=(0,90),colorbar=:right)
-# savefig("~/Desktop/N=$N,K1D=$K1D,T=$T,doubleMachReflection.png")
+xp = Vp*x
+yp = Vp*y
+vv = Vp*U[1,:,:]
+scatter(xp,yp,vv,zcolor=vv,camera=(0,90),colorbar=:right)
+savefig("~/Desktop/N=$N,K1D=$K1D,T=$T,doubleMachReflection.png")
