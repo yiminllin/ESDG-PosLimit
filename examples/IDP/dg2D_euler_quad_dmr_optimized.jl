@@ -716,14 +716,14 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
 
         for c = 1:Nc
             for i = 1:Np
-                U_low[c,i,tid] = U[c,i,k] - dt*MJ_inv[i,i]*U_low[c,i,tid]
+                U_low[c,i,tid] = U[c,i,k] - dt*MJ_inv[i]*U_low[c,i,tid]
             end
         end
 
         # Calculate limiting parameters
         # TODO: skip diagonal
         for i = 1:Np
-            coeff = coeff_arr[i,i]
+            coeff = coeff_arr[i]
             rhoL  = U_low[1,i,tid]
             rhouL = U_low[2,i,tid]
             rhovL = U_low[3,i,tid]
@@ -769,7 +769,7 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
     for k = 1:K
         for i = 1:Np
             for c = 1:Nc
-                rhsU[c,i,k] = 1/J*Minv[i,i]*rhsU[c,i,k]
+                rhsU[c,i,k] = MJ_inv[i]*rhsU[c,i,k]
             end
         end
     end
@@ -793,6 +793,13 @@ const rxJ_sq = rxJ^2
 const syJ_sq = syJ^2
 const rxJ_db = 2*rxJ
 const syJ_db = 2*syJ
+
+# Convert diagonal matrices to vectors
+Br   = Array(diag(Br))
+Bs   = Array(diag(Bs))
+M    = Array(diag(M))
+Minv = Array(diag(Minv))
+
 MJ_inv    = Minv./J
 Br_halved = -sum(S0r,dims=2)
 Bs_halved = -sum(S0s,dims=2)
@@ -866,9 +873,7 @@ geom     = (mapP,Fmask,Fxmask,Fymask,x,y,nxJ,nyJ,sJ,xf,inflow,outflow,topflow,wa
 "Time integration"
 t = 0.0
 U = collect(U)
-resU = zeros(size(U))
 resW = zeros(size(U))
-resZ = zeros(size(U))
 
 #plotting nodes
 @unpack VDM = rd
@@ -877,35 +882,35 @@ Vp = vandermonde_2D(N,rp,sp)/VDM
 gr(aspect_ratio=:equal,legend=false,
    markerstrokewidth=0,markersize=2)
 
-dt = dt0
-@btime rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom);
-# rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom);
+# dt = dt0
+# @btime rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom);
+# # rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom);
 
-# dt_hist = []
-# i = 1
+dt_hist = []
+i = 1
 
-# @time while t < T
-# #while i < 2
-#     # SSPRK(3,3)
-#     dt = min(dt0,T-t)
-#     rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom);
-#     @. resW = U + dt*rhsU
-#     rhs_IDP_fixdt!(resW,rhsU,t,dt,prealloc,ops,geom);
-#     @. resZ = resW+dt*rhsU
-#     @. resW = 3/4*U+1/4*resZ
-#     rhs_IDP_fixdt!(resW,rhsU,t,dt,prealloc,ops,geom);
-#     @. resZ = resW+dt*rhsU
-#     @. U = 1/3*U+2/3*resZ
+@time while t < T
+#while i < 2
+    # SSPRK(3,3)
+    dt = min(dt0,T-t)
+    rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom);
+    @. resW = U + dt*rhsU
+    rhs_IDP_fixdt!(resW,rhsU,t,dt,prealloc,ops,geom);
+    @. resW = resW+dt*rhsU
+    @. resW = 3/4*U+1/4*resW
+    rhs_IDP_fixdt!(resW,rhsU,t,dt,prealloc,ops,geom);
+    @. resW = resW+dt*rhsU
+    @. U = 1/3*U+2/3*resW
 
-#     push!(dt_hist,dt)
-#     global t = t + dt
-#     println("Current time $t with time step size $dt, and final time $T, at step $i")
-#     flush(stdout)
-#     global i = i + 1
-# end
+    push!(dt_hist,dt)
+    global t = t + dt
+    println("Current time $t with time step size $dt, and final time $T, at step $i")
+    flush(stdout)
+    global i = i + 1
+end
 
-# xp = Vp*x
-# yp = Vp*y
-# vv = Vp*U[1,:,:]
-# scatter(xp,yp,vv,zcolor=vv,camera=(0,90),colorbar=:right)
-# savefig("~/Desktop/N=$N,K1D=$K1D,T=$T,doubleMachReflection.png")
+xp = Vp*x
+yp = Vp*y
+vv = Vp*U[1,:,:]
+scatter(xp,yp,vv,zcolor=vv,camera=(0,90),colorbar=:right)
+savefig("~/Desktop/N=$N,K1D=$K1D,T=$T,doubleMachReflection.png")
