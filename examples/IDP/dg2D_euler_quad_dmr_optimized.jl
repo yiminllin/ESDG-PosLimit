@@ -7,6 +7,8 @@ using BenchmarkTools
 using UnPack
 using StaticArrays
 using DelimitedFiles
+using Polyester
+using MuladdMacro
 
 push!(LOAD_PATH, "./src")
 using CommonUtils
@@ -20,6 +22,8 @@ push!(LOAD_PATH, "./examples/EntropyStableEuler.jl/src")
 include("../EntropyStableEuler.jl/src/logmean.jl")
 using EntropyStableEuler
 using EntropyStableEuler.Fluxes2D
+
+@muladd begin
 
 @inline function pfun(rho,rhou,E)
     return (γ-1)*(E-.5*rhou^2/rho)
@@ -455,7 +459,8 @@ end
 
 function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
     # TODO: previous RHS time 12 ms
-    # TODO: current RHS time 5 ms
+    # TODO: debug RHS time 2.88 ms
+    # TODO: current RHS time 4.8 ms
     # TODO: optimize boundary condition enforcement
     # TODO: hardcoded variables!
     # TODO: diagonal matrix to vec
@@ -636,18 +641,26 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
         # TODO: use Ub?
         for j = 2:Np
             rho_j     = U[1,j,k]
-            u_j       = U[2,j,k]/rho_j
-            v_j       = U[3,j,k]/rho_j
-            beta_j    = rho_j/(2*pfun(rho_j,rho_j*u_j,rho_j*v_j,U[4,j,k]))
+            rhou_j    = U[2,j,k]
+            rhov_j    = U[3,j,k]
+            E_j       = U[4,j,k]
+            p_j       = pfun(rho_j,rhou_j,rhov_j,E_j)
+            u_j       = rhou_j/rho_j
+            v_j       = rhov_j/rho_j
+            beta_j    = rho_j/(2*p_j)
             rholog_j  = rholog[j,k]
             betalog_j = betalog[j,k]
             for i = 1:j-1
                 Sr_ij     = Sr[i,j]
                 Ss_ij     = Ss[i,j]
                 rho_i     = U[1,i,k]
-                u_i       = U[2,i,k]/rho_i
-                v_i       = U[3,i,k]/rho_i
-                beta_i    = rho_i/(2*pfun(rho_i,rho_i*u_i,rho_i*v_i,U[4,i,k]))
+                rhou_i    = U[2,i,k]
+                rhov_i    = U[3,i,k]
+                E_i       = U[4,i,k]
+                p_i       = pfun(rho_i,rhou_i,rhov_i,E_i)
+                u_i       = rhou_i/rho_i
+                v_i       = rhov_i/rho_i
+                beta_i    = rho_i/(2*p_i)
                 rholog_i  = rholog[i,k]
                 betalog_i = betalog[i,k]
                 if Sr_ij != 0.0 || Ss_ij != 0.0
@@ -914,3 +927,10 @@ yp = Vp*y
 vv = Vp*U[1,:,:]
 scatter(xp,yp,vv,zcolor=vv,camera=(0,90),colorbar=:right)
 savefig("~/Desktop/N=$N,K1D=$K1D,T=$T,doubleMachReflection.png")
+
+
+
+
+
+
+end #muladd
