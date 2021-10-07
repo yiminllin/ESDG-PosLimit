@@ -146,11 +146,11 @@ const POSTOL = 1e-14
 const WALLPT = 1.0/6.0
 const Nc = 4 # number of components
 "Approximation parameters"
-N = 3
-K1D = 20
+N = 2
+K1D = 40
 T = 0.1
-dt0 = 5e-5
-const XLENGTH = 7.0/2.0
+dt0 = 1e-4
+const XLENGTH = 4#7.0/2.0
 const CFL = 1.0
 const NUM_THREADS = Threads.nthreads()
 const BOTTOMRIGHT = N+1
@@ -246,42 +246,27 @@ S0s = droptol!(sparse(kron(S01D,M1D)),TOL)
 Br = droptol!(sparse(Qr+Qr'),TOL)
 Bs = droptol!(sparse(Qs+Qs'),TOL)
 
-@inline function get_valP(U,f_x,f_y,t,mapP,Fmask,i,iM,xM,yM,uM,vM,k)
-    # TODO: define constants
+@inline function check_BC(xM,yM,i)
     inflow  = ((abs(xM) < TOL) | ((xM < WALLPT) & (abs(yM) < TOL)) & ((i <= BOTTOMRIGHT) | (i > TOPLEFT)))
     outflow = ((abs(xM-XLENGTH) < TOL) & (abs(yM) > TOL) & (abs(yM-1.0) > TOL) & (i > BOTTOMRIGHT) & (i <= TOPRIGHT))
     topflow = ((abs(yM-1.0) < TOL) & (i > TOPRIGHT) & (i <= TOPLEFT))
     wall    = ((xM >= WALLPT) & (abs(yM) < TOL) & (i <= BOTTOMRIGHT))
     has_bc  = (inflow | outflow | topflow | wall)
+    return inflow,outflow,topflow,wall,has_bc
+end
 
+@inline function get_consP(U,f_x,f_y,t,mapP,Fmask,i,iM,xM,yM,uM,vM,k,inflow,outflow,topflow,wall,has_bc)
+    # TODO: define constants
     if inflow
         rhoP   = rhoL
         rhouP  = rhouL
         rhovP  = rhovL
         EP     = EL
-        fx_1_P = fx1L
-        fx_2_P = fx2L
-        fx_3_P = fx3L
-        fx_4_P = fx4L
-        fy_1_P = fy1L
-        fy_2_P = fy2L
-        fy_3_P = fy3L
-        fy_4_P = fy4L
-
     elseif outflow
         rhoP   = U[1,iM,k]
         rhouP  = U[2,iM,k]
         rhovP  = U[3,iM,k]
         EP     = U[4,iM,k]
-        fx_1_P = fx1R
-        fx_2_P = fx2R
-        fx_3_P = fx3R
-        fx_4_P = fx4R
-        fy_1_P = fy1R
-        fy_2_P = fy2R
-        fy_3_P = fy3R
-        fy_4_P = fy4R
-
     elseif wall
         # TODO: we assume the normals are [0;-1] here
         # Un = -u2 = -vM
@@ -294,9 +279,6 @@ Bs = droptol!(sparse(Qs+Qs'),TOL)
         rhouP  = rhoP*uP
         rhovP  = rhoP*vP
         EP     = U[4,iM,k]
-        pP     = pfun(rhoP,rhouP,rhovP,EP)
-        fx_1_P,fx_2_P,fx_3_P,fx_4_P,fy_1_P,fy_2_P,fy_3_P,fy_4_P = inviscid_flux_prim(rhoP,uP,vP,pP)
-
     elseif topflow
         breakpoint = TOP_INIT+t*SHOCKSPD
         if xM < breakpoint
@@ -304,6 +286,59 @@ Bs = droptol!(sparse(Qs+Qs'),TOL)
             rhouP  = rhouL
             rhovP  = rhovL
             EP     = EL
+        else
+            rhoP   = rhoR
+            rhouP  = rhouR
+            rhovP  = rhovR
+            EP     = ER
+        end
+    else                         # if not on the physical boundary
+        gP = mapP[i,k]           # exterior global face node number
+        kP = fld1(gP,Nfp)        # exterior element number
+        iP = Fmask[mod1(gP,Nfp)] # exterior node number
+
+        rhoP  = U[1,iP,kP]
+        rhouP = U[2,iP,kP]
+        rhovP = U[3,iP,kP]
+        EP    = U[4,iP,kP]
+    end
+
+    return rhoP,rhouP,rhovP,EP
+end
+
+@inline function get_fluxP(U,f_x,f_y,t,mapP,Fmask,i,iM,xM,yM,uM,vM,k,inflow,outflow,topflow,wall,has_bc,rhoP,rhouP,rhovP,EP)
+    # TODO: define constants
+    if inflow
+        fx_1_P = fx1L
+        fx_2_P = fx2L
+        fx_3_P = fx3L
+        fx_4_P = fx4L
+        fy_1_P = fy1L
+        fy_2_P = fy2L
+        fy_3_P = fy3L
+        fy_4_P = fy4L
+    elseif outflow
+        fx_1_P = fx1R
+        fx_2_P = fx2R
+        fx_3_P = fx3R
+        fx_4_P = fx4R
+        fy_1_P = fy1R
+        fy_2_P = fy2R
+        fy_3_P = fy3R
+        fy_4_P = fy4R
+    elseif wall
+        # TODO: we assume the normals are [0;-1] here
+        # Un = -u2 = -vM
+        # Ut = -u1 = -uM
+        # uP = -Ut = uM
+        # vP = -(-Un) = -vM
+        uP = rhouP/rhoP
+        vP = rhovP/rhoP
+        pP = pfun(rhoP,rhouP,rhovP,EP)
+        fx_1_P,fx_2_P,fx_3_P,fx_4_P,fy_1_P,fy_2_P,fy_3_P,fy_4_P = inviscid_flux_prim(rhoP,uP,vP,pP)
+    elseif topflow
+        breakpoint = TOP_INIT+t*SHOCKSPD
+        if xM < breakpoint
             fx_1_P = fx1L
             fx_2_P = fx2L
             fx_3_P = fx3L
@@ -313,10 +348,6 @@ Bs = droptol!(sparse(Qs+Qs'),TOL)
             fy_3_P = fy3L
             fy_4_P = fy4L
         else
-            rhoP   = rhoR
-            rhouP  = rhouR
-            rhovP  = rhovR
-            EP     = ER
             fx_1_P = fx1R
             fx_2_P = fx2R
             fx_3_P = fx3R
@@ -331,10 +362,6 @@ Bs = droptol!(sparse(Qs+Qs'),TOL)
         kP = fld1(gP,Nfp)        # exterior element number
         iP = Fmask[mod1(gP,Nfp)] # exterior node number
 
-        rhoP  = U[1,iP,kP]
-        rhouP = U[2,iP,kP]
-        rhovP = U[3,iP,kP]
-        EP    = U[4,iP,kP]
         fx_1_P = f_x[1,iP,kP]
         fx_2_P = f_x[2,iP,kP]
         fx_3_P = f_x[3,iP,kP]
@@ -345,25 +372,29 @@ Bs = droptol!(sparse(Qs+Qs'),TOL)
         fy_4_P = f_y[4,iP,kP]
     end
 
-    return rhoP,rhouP,rhovP,EP,fx_1_P,fx_2_P,fx_3_P,fx_4_P,fy_1_P,fy_2_P,fy_3_P,fy_4_P,has_bc
+    return fx_1_P,fx_2_P,fx_3_P,fx_4_P,fy_1_P,fy_2_P,fy_3_P,fy_4_P
 end
 
-
+@inline function get_valP(U,f_x,f_y,t,mapP,Fmask,i,iM,xM,yM,uM,vM,k)
+    inflow,outflow,topflow,wall,has_bc = check_BC(xM,yM,i)
+    rhoP,rhouP,rhovP,EP = get_consP(U,f_x,f_y,t,mapP,Fmask,i,iM,xM,yM,uM,vM,k,inflow,outflow,topflow,wall,has_bc)
+    fx_1_P,fx_2_P,fx_3_P,fx_4_P,fy_1_P,fy_2_P,fy_3_P,fy_4_P = get_fluxP(U,f_x,f_y,t,mapP,Fmask,i,iM,xM,yM,uM,vM,k,inflow,outflow,topflow,wall,has_bc,rhoP,rhouP,rhovP,EP)
+    return rhoP,rhouP,rhovP,EP,fx_1_P,fx_2_P,fx_3_P,fx_4_P,fy_1_P,fy_2_P,fy_3_P,fy_4_P,has_bc
+end
 
 
 function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
     # TODO: compare: N=3, K=200, XLENGTH=4
     # TODO: previous RHS time 5.6s
     # TODO: current RHS time 1.9s
-    # TODO: hardcoded variables!
-    # TODO: diagonal matrix to vec
-
-    f_x,f_y,rholog,betalog,U_low,F_low,F_high,F_P,L = prealloc
+    # TODO: CFL condition
+    f_x,f_y,rholog,betalog,U_low,F_low,F_high,F_P,L,λ_arr,λf_arr,dii_arr = prealloc
     S0r,S0s,Sr,Ss,S0r_sq,S0s_sq,MJ_inv,Br_halved,Bs_halved,coeff_arr = ops
     mapP,Fmask,Fxmask,Fymask,x,y = geom
 
     fill!(rhsU,0.0)
-    @batch for k = 1:K
+#    @batch for k = 1:K
+    for k = 1:K
         for i = 1:Np
             rho  = U[1,i,k]
             rhou = U[2,i,k]
@@ -383,10 +414,67 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
         end
     end
 
+    # Precompute wavespeeds
+    # TODO: precompute dissipation coeff in one pass
+    # @batch for k = 1:K
+    for k = 1:K
+        tid = Threads.threadid()
+
+        # # Interior wavespd, leading 2 - x and y directions 
+        # for i = 1:Np
+        #     rho_i  = U[1,i,k]
+        #     rhou_i = U[2,i,k]
+        #     rhov_i = U[3,i,k]
+        #     E_i    = U[4,i,k]
+        #     λ_arr[1,i,k] = wavespeed_1D(rho_i,rhou_i,E_i)
+        #     λ_arr[2,i,k] = wavespeed_1D(rho_i,rhov_i,E_i)
+        # end
+
+        # Interface dissipation coeff 
+        for i = 1:Nfp
+            iM = Fmask[i]
+            BrJ_ii_halved_abs = Jf*abs(Br_halved[iM])
+            BsJ_ii_halved_abs = Jf*abs(Bs_halved[iM])
+            rhoM  = U[1,iM,k]
+            rhouM = U[2,iM,k]
+            rhovM = U[3,iM,k]
+            EM    = U[4,iM,k]
+            uM    = rhouM/rhoM
+            vM    = rhovM/rhoM
+            xM    = x[iM,k]
+            yM    = y[iM,k]
+
+            inflow,outflow,topflow,wall,has_bc = check_BC(xM,yM,i)
+            rhoP,rhouP,rhovP,EP = get_consP(U,f_x,f_y,t,mapP,Fmask,i,iM,xM,yM,uM,vM,k,inflow,outflow,topflow,wall,has_bc)
+            
+            # TODO: replace in with comparision
+            if i in Fxmask
+                λM = wavespeed_1D(rhoM,rhouM,EM)
+                λP = wavespeed_1D(rhoP,rhouP,EP)
+                if has_bc
+                    λf_arr[i,k] = 0.0
+                else
+                    λf_arr[i,k] = max(λM,λP)*BrJ_ii_halved_abs
+                end
+            end
+
+            if i in Fymask
+                λM = wavespeed_1D(rhoM,rhovM,EM)
+                λP = wavespeed_1D(rhoP,rhovP,EP)
+                if has_bc
+                    λf_arr[i,k] = 0.0
+                else
+                    λf_arr[i,k] = max(λM,λP)*BsJ_ii_halved_abs
+                end
+            end
+        end
+    end
+
     # =====================
     # Loop through elements
     # =====================
-    @batch for k = 1:K
+#    @batch for k = 1:K
+    for k = 1:K
         tid = Threads.threadid()
 
         fill!(F_low ,0.0)
@@ -431,6 +519,7 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
                     # TODO: store n_ij?
                     n_ij_norm = sqrt(rxJ_sq*S0r_ij_sq+syJ_sq*S0s_ij_sq)
                     # TODO: reuse wavespd?
+                    # TODO: either [0;1] or [1;0]
                     n_ij_x = rxJ*S0r_ij/n_ij_norm
                     n_ij_y = syJ*S0s_ij/n_ij_norm
                     λ_i = wavespeed_1D(rho_i,n_ij_x*rhou_i+n_ij_y*rhov_i,E_i)
@@ -465,7 +554,6 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
         end
 
         # Calculate high order algebraic flux
-        # TODO: use Ub?
         for j = 2:Np
             rho_j     = U[1,j,k]
             rhou_j    = U[2,j,k]
@@ -514,9 +602,11 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
 
         # Calculate interface fluxes
         for i = 1:Nfp
+            # TODO: some unnecessary variables
             iM    = Fmask[i]
-            Br_ii_halved = Br_halved[iM]
-            Bs_ii_halved = Bs_halved[iM]
+            # TODO: precompute this!
+            BrJ_ii_halved = Jf*Br_halved[iM]
+            BsJ_ii_halved = Jf*Bs_halved[iM]
             xM    = x[iM,k]
             yM    = y[iM,k]
             rhoM  = U[1,iM,k]
@@ -535,44 +625,29 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
             fy_4_M = f_y[4,iM,k]
 
             rhoP,rhouP,rhovP,EP,fx_1_P,fx_2_P,fx_3_P,fx_4_P,fy_1_P,fy_2_P,fy_3_P,fy_4_P,has_bc = get_valP(U,f_x,f_y,t,mapP,Fmask,i,iM,xM,yM,uM,vM,k)
+            λ = λf_arr[i,k]
 
             # flux in x direction
             if i in Fxmask
-                λM = wavespeed_1D(rhoM,rhouM,EM)
-                λP = wavespeed_1D(rhoP,rhouP,EP)
-                if has_bc
-                    λ = 0.0
-                else
-                    λ  = Jf*max(λM,λP)*abs(Br_ii_halved)
-                end
-
-                F_P[1,i,tid] = (Jf*Br_ii_halved*(fx_1_M+fx_1_P)
+                F_P[1,i,tid] = (BrJ_ii_halved*(fx_1_M+fx_1_P)
                                -λ*(rhoP-rhoM) )
-                F_P[2,i,tid] = (Jf*Br_ii_halved*(fx_2_M+fx_2_P)
+                F_P[2,i,tid] = (BrJ_ii_halved*(fx_2_M+fx_2_P)
                                -λ*(rhouP-rhouM) )
-                F_P[3,i,tid] = (Jf*Br_ii_halved*(fx_3_M+fx_3_P)
+                F_P[3,i,tid] = (BrJ_ii_halved*(fx_3_M+fx_3_P)
                                -λ*(rhovP-rhovM) )
-                F_P[4,i,tid] = (Jf*Br_ii_halved*(fx_4_M+fx_4_P)
+                F_P[4,i,tid] = (BrJ_ii_halved*(fx_4_M+fx_4_P)
                                -λ*(EP-EM) )
             end
 
             # flux in y direction
             if i in Fymask
-                λM = wavespeed_1D(rhoM,rhovM,EM)
-                λP = wavespeed_1D(rhoP,rhovP,EP)
-                if has_bc
-                    λ = 0.0
-                else
-                    λ  = Jf*max(λM,λP)*abs(Bs_ii_halved)
-                end
-
-                F_P[1,i,tid] = (Jf*Bs_ii_halved*(fy_1_M+fy_1_P)
+                F_P[1,i,tid] = (BsJ_ii_halved*(fy_1_M+fy_1_P)
                                -λ*(rhoP-rhoM) )
-                F_P[2,i,tid] = (Jf*Bs_ii_halved*(fy_2_M+fy_2_P)
+                F_P[2,i,tid] = (BsJ_ii_halved*(fy_2_M+fy_2_P)
                                -λ*(rhouP-rhouM) )
-                F_P[3,i,tid] = (Jf*Bs_ii_halved*(fy_3_M+fy_3_P)
+                F_P[3,i,tid] = (BsJ_ii_halved*(fy_3_M+fy_3_P)
                                -λ*(rhovP-rhovM) )
-                F_P[4,i,tid] = (Jf*Bs_ii_halved*(fy_4_M+fy_4_P)
+                F_P[4,i,tid] = (BsJ_ii_halved*(fy_4_M+fy_4_P)
                                -λ*(EP-EM) )
             end
         end
@@ -646,6 +721,7 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
         end
     end
 
+#    @batch for k = 1:K
     for k = 1:K
         for i = 1:Np
             for c = 1:Nc
@@ -725,8 +801,11 @@ F_low   = zeros(Float64,Nc,Np,Np,NUM_THREADS)
 F_high  = zeros(Float64,Nc,Np,Np,NUM_THREADS)
 F_P     = zeros(Float64,Nc,Nfp,NUM_THREADS)
 L       =  ones(Float64,Np,Np,NUM_THREADS)
+λ_arr   = zeros(Float64,2,Np,K)
+λf_arr  = zeros(Float64,Nfp,K)
+dii_arr = zeros(Float64,Np)
 
-prealloc = (f_x,f_y,rholog,betalog,U_low,F_low,F_high,F_P,L)
+prealloc = (f_x,f_y,rholog,betalog,U_low,F_low,F_high,F_P,L,λ_arr,λf_arr,dii_arr)
 ops =    (S0r,S0s,Sr,Ss,S0r_sq,S0s_sq,MJ_inv,Br_halved,Bs_halved,coeff_arr)
 geom =  (mapP,Fmask,Fxmask,Fymask,x,y)
 
@@ -785,7 +864,6 @@ end
 
 
 @time while t < T
-#while i < 2
     # SSPRK(3,3)
     dt = min(dt0,T-t)
     rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom);
