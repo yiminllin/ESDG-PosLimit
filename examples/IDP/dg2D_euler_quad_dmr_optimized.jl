@@ -89,26 +89,30 @@ end
 @inline function inviscid_flux_prim(rho,u,v,p)
     E = Efun(rho,u,v,p)
 
-    fx1 = rho*u
-    fx2 = rho*u^2+p
-    fx3 = rho*u*v
-    fx4 = u*(E+p)
+    rhou  = rho*u
+    rhov  = rho*v
+    rhouv = rho*u*v
+    Ep    = E+p
 
-    fy1 = rho*v
-    fy2 = rho*u*v
-    fy3 = rho*v^2+p
-    fy4 = v*(E+p)
+    fx1 = rhou
+    fx2 = rhou*u+p
+    fx3 = rhouv
+    fx4 = u*Ep
+
+    fy1 = rhov
+    fy2 = rhouv
+    fy3 = rhov*v+p
+    fy4 = v*Ep
 
     return fx1,fx2,fx3,fx4,fy1,fy2,fy3,fy4
 end
 
 @inline function limiting_param(rhoL,rhouL,rhovL,EL,rhoP,rhouP,rhovP,EP)
     # L - low order, P - P_ij
-
     l = 1.0
     # Limit density
     if rhoL + rhoP < -TOL
-        l = max((-rhoL+POSTOL)/rhoP, 0)
+        l = max((-rhoL+POSTOL)/rhoP, 0.0)
     end
 
     # limiting internal energy (via quadratic function)
@@ -116,10 +120,14 @@ end
     b = rhoP*EL+rhoL*EP-rhouL*rhouP-rhovL*rhovP
     c = rhoL*EL-(rhouL^2+rhovL^2)/2.0-POSTOL
 
+    d = 1.0/(2.0*a)
+    e = b^2-4.0*a*c
+
     l_eps_ij = 1.0
-    if b^2-4*a*c >= 0
-        r1 = (-b+sqrt(b^2-4*a*c))/(2*a)
-        r2 = (-b-sqrt(b^2-4*a*c))/(2*a)
+    if e >= 0
+        f = sqrt(e)
+        r1 = (-b+f)*d
+        r2 = (-b-f)*d
         if r1 > TOL && r2 > TOL
             l_eps_ij = min(r1,r2)
         elseif r1 > TOL && r2 < -TOL
@@ -133,19 +141,16 @@ end
     return l
 end
 
-
-
-
 const TOL = 5e-16
 const POSTOL = 1e-14
 const WALLPT = 1.0/6.0
 const Nc = 4 # number of components
 "Approximation parameters"
 N = 3
-K1D = 200
+K1D = 20
 T = 0.1
-dt0 = 1e-4
-const XLENGTH = 4.0#7.0/2.0
+dt0 = 5e-5
+const XLENGTH = 7.0/2.0
 const CFL = 1.0
 const NUM_THREADS = Threads.nthreads()
 const BOTTOMRIGHT = N+1
@@ -350,9 +355,6 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
     # TODO: compare: N=3, K=200, XLENGTH=4
     # TODO: previous RHS time 5.6s
     # TODO: current RHS time 1.9s
-    # TODO: current RHS surface preallocate time 2.7s
-    # TODO: current RHS with preallocated surface time
-    # TODO: optimize boundary condition enforcement
     # TODO: hardcoded variables!
     # TODO: diagonal matrix to vec
 
@@ -361,7 +363,7 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
     mapP,Fmask,Fxmask,Fymask,x,y = geom
 
     fill!(rhsU,0.0)
-    for k = 1:K
+    @batch for k = 1:K
         for i = 1:Np
             rho  = U[1,i,k]
             rhou = U[2,i,k]
@@ -384,7 +386,7 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
     # =====================
     # Loop through elements
     # =====================
-    for k = 1:K
+    @batch for k = 1:K
         tid = Threads.threadid()
 
         fill!(F_low ,0.0)
@@ -742,75 +744,75 @@ Vp = vandermonde_2D(N,rp,sp)/VDM
 gr(aspect_ratio=:equal,legend=false,
    markerstrokewidth=0,markersize=2)
 
-dt = dt0
-@btime rhs_IDP_fixdt!($U,$rhsU,$t,$dt,$prealloc,$ops,$geom);
-# rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom);
+# dt = dt0
+# @btime rhs_IDP_fixdt!($U,$rhsU,$t,$dt,$prealloc,$ops,$geom);
+# #@profiler rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom);
 
-# dt_hist = []
-# i = 1
+dt_hist = []
+i = 1
 
-# mapN = collect(reshape(1:Np*K,Np,K))
-# inflow_nodal = mapN[findall(@. (abs(x) < TOL) | ((x < WALLPT) & (abs(y) < TOL)))]
-# outflow_nodal = mapN[findall(@. abs(x-XLENGTH) < TOL)]
-# topflow_nodal = mapN[findall(@. abs(y-1.) < TOL)]
+mapN = collect(reshape(1:Np*K,Np,K))
+inflow_nodal = mapN[findall(@. (abs(x) < TOL) | ((x < WALLPT) & (abs(y) < TOL)))]
+outflow_nodal = mapN[findall(@. abs(x-XLENGTH) < TOL)]
+topflow_nodal = mapN[findall(@. abs(y-1.) < TOL)]
 
-# @inline function enforce_BC_timestep!(U,inflow_nodal,topflow_nodal,t)
-#     for i = inflow_nodal
-#         k = fld1(i,Np)
-#         j = mod1(i,Np)
-#         U[1,j,k] = rhoL
-#         U[2,j,k] = rhouL
-#         U[3,j,k] = rhovL
-#         U[4,j,k] = EL
-#     end
-#     breakpoint = TOP_INIT+t*SHOCKSPD
-#     for i = topflow_nodal
-#         k = fld1(i,Np)
-#         j = mod1(i,Np)
-#         if x[i] < breakpoint
-#             U[1,j,k] = rhoL
-#             U[2,j,k] = rhouL
-#             U[3,j,k] = rhovL
-#             U[4,j,k] = EL
-#         else
-#             U[1,j,k] = rhoR
-#             U[2,j,k] = rhouR
-#             U[3,j,k] = rhovR
-#             U[4,j,k] = ER
-#         end
-#     end
-# end
+@inline function enforce_BC_timestep!(U,inflow_nodal,topflow_nodal,t)
+    for i = inflow_nodal
+        k = fld1(i,Np)
+        j = mod1(i,Np)
+        U[1,j,k] = rhoL
+        U[2,j,k] = rhouL
+        U[3,j,k] = rhovL
+        U[4,j,k] = EL
+    end
+    breakpoint = TOP_INIT+t*SHOCKSPD
+    for i = topflow_nodal
+        k = fld1(i,Np)
+        j = mod1(i,Np)
+        if x[i] < breakpoint
+            U[1,j,k] = rhoL
+            U[2,j,k] = rhouL
+            U[3,j,k] = rhovL
+            U[4,j,k] = EL
+        else
+            U[1,j,k] = rhoR
+            U[2,j,k] = rhouR
+            U[3,j,k] = rhovR
+            U[4,j,k] = ER
+        end
+    end
+end
 
 
-# @time while t < T
-# #while i < 2
-#     # SSPRK(3,3)
-#     dt = min(dt0,T-t)
-#     rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom);
-#     @. resW = U + dt*rhsU
-#     rhs_IDP_fixdt!(resW,rhsU,t+dt,dt,prealloc,ops,geom);
-#     @. resW = resW+dt*rhsU
-#     @. resW = 3/4*U+1/4*resW
-#     rhs_IDP_fixdt!(resW,rhsU,t+dt/2,dt,prealloc,ops,geom);
-#     @. resW = resW+dt*rhsU
-#     @. U = 1/3*U+2/3*resW
-#     enforce_BC_timestep!(U,inflow_nodal,topflow_nodal,t);
+@time while t < T
+#while i < 2
+    # SSPRK(3,3)
+    dt = min(dt0,T-t)
+    rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom);
+    @. resW = U + dt*rhsU
+    rhs_IDP_fixdt!(resW,rhsU,t+dt,dt,prealloc,ops,geom);
+    @. resW = resW+dt*rhsU
+    @. resW = 3/4*U+1/4*resW
+    rhs_IDP_fixdt!(resW,rhsU,t+dt/2,dt,prealloc,ops,geom);
+    @. resW = resW+dt*rhsU
+    @. U = 1/3*U+2/3*resW
+    enforce_BC_timestep!(U,inflow_nodal,topflow_nodal,t+dt);
 
-#     push!(dt_hist,dt)
-#     global t = t + dt
-#     println("Current time $t with time step size $dt, and final time $T, at step $i")
-#     flush(stdout)
-#     global i = i + 1
-# end
+    push!(dt_hist,dt)
+    global t = t + dt
+    println("Current time $t with time step size $dt, and final time $T, at step $i")
+    flush(stdout)
+    global i = i + 1
+end
 
-# xp = Vp*x
-# yp = Vp*y
-# vv = Vp*U[1,:,:]
-# xp = vec(xp)
-# yp = vec(yp)
-# vv = vec(vv)
-# scatter(xp,yp,vv,zcolor=vv,camera=(0,90),colorbar=:right)
-# savefig("~/Desktop/N=$N,K1D=$K1D,T=$T,doubleMachReflection.png")
+xp = Vp*x
+yp = Vp*y
+vv = Vp*U[1,:,:]
+xp = vec(xp)
+yp = vec(yp)
+vv = vec(vv)
+scatter(xp,yp,vv,zcolor=vv,camera=(0,90),colorbar=:right)
+savefig("~/Desktop/N=$N,K1D=$K1D,T=$T,doubleMachReflection.png")
 
 
 
