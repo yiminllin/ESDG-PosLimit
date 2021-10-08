@@ -86,6 +86,52 @@ end
     return FxS1,FxS2,FxS3,FxS4,FyS1,FyS2,FyS3,FyS4
 end
 
+@inline function euler_fluxes_2D_x(rhoL,uL,vL,betaL,rhologL,betalogL,
+                                   rhoR,uR,vR,betaR,rhologR,betalogR)
+
+    rholog  = logmean(rhoL,rhoR,rhologL,rhologR)
+    betalog = logmean(betaL,betaR,betalogL,betalogR)
+
+    # arithmetic avgs
+    rhoavg = .5*(rhoL+rhoR)
+    uavg   = .5*(uL+uR)
+    vavg   = .5*(vL+vR)
+
+    unorm = uL*uR + vL*vR
+    pa    = rhoavg/(betaL+betaR)
+    f4aux = rholog/(2*(γ-1)*betalog) + pa + .5*rholog*unorm
+
+    FxS1 = rholog*uavg
+    FxS2 = FxS1*uavg + pa
+    FxS3 = FxS1*vavg
+    FxS4 = f4aux*uavg
+
+    return FxS1,FxS2,FxS3,FxS4
+end
+
+@inline function euler_fluxes_2D_y(rhoL,uL,vL,betaL,rhologL,betalogL,
+                                   rhoR,uR,vR,betaR,rhologR,betalogR)
+
+    rholog  = logmean(rhoL,rhoR,rhologL,rhologR)
+    betalog = logmean(betaL,betaR,betalogL,betalogR)
+
+    # arithmetic avgs
+    rhoavg = .5*(rhoL+rhoR)
+    uavg   = .5*(uL+uR)
+    vavg   = .5*(vL+vR)
+
+    unorm = uL*uR + vL*vR
+    pa    = rhoavg/(betaL+betaR)
+    f4aux = rholog/(2*(γ-1)*betalog) + pa + .5*rholog*unorm
+
+    FyS1 = rholog*vavg
+    FyS2 = FyS1*uavg
+    FyS3 = FyS1*vavg + pa
+    FyS4 = f4aux*vavg
+
+    return FyS1,FyS2,FyS3,FyS4
+end
+
 @inline function inviscid_flux_prim(rho,u,v,p)
     E = Efun(rho,u,v,p)
 
@@ -424,14 +470,60 @@ end
     F_low[4,j,i,tid] = -FL4
 end
 
+@inline function update_F_high!(F_high,k,tid,i,j,SJ_ij_db,U,rholog,betalog,direction)
+    rho_j     = U[1,j,k]
+    rhou_j    = U[2,j,k]
+    rhov_j    = U[3,j,k]
+    E_j       = U[4,j,k]
+    p_j       = pfun(rho_j,rhou_j,rhov_j,E_j)
+    u_j       = rhou_j/rho_j
+    v_j       = rhov_j/rho_j
+    beta_j    = rho_j/(2*p_j)
+    rholog_j  = rholog[j,k]
+    betalog_j = betalog[j,k]
+    rho_i     = U[1,i,k]
+    rhou_i    = U[2,i,k]
+    rhov_i    = U[3,i,k]
+    E_i       = U[4,i,k]
+    p_i       = pfun(rho_i,rhou_i,rhov_i,E_i)
+    u_i       = rhou_i/rho_i
+    v_i       = rhov_i/rho_i
+    beta_i    = rho_i/(2*p_i)
+    rholog_i  = rholog[i,k]
+    betalog_i = betalog[i,k]
+    
+    if (direction == 0)
+        # x direction
+        F1,F2,F3,F4 = euler_fluxes_2D_x(rho_i,u_i,v_i,beta_i,rholog_i,betalog_i,
+                                        rho_j,u_j,v_j,beta_j,rholog_j,betalog_j)
+    else
+        # y direction
+        F1,F2,F3,F4 = euler_fluxes_2D_y(rho_i,u_i,v_i,beta_i,rholog_i,betalog_i,
+                                        rho_j,u_j,v_j,beta_j,rholog_j,betalog_j)
+    end
+    FH1 = SJ_ij_db*F1
+    FH2 = SJ_ij_db*F2
+    FH3 = SJ_ij_db*F3
+    FH4 = SJ_ij_db*F4
+
+    F_high[1,i,j,tid] = FH1
+    F_high[2,i,j,tid] = FH2
+    F_high[3,i,j,tid] = FH3
+    F_high[4,i,j,tid] = FH4
+
+    F_high[1,j,i,tid] = -FH1
+    F_high[2,j,i,tid] = -FH2
+    F_high[3,j,i,tid] = -FH3
+    F_high[4,j,i,tid] = -FH4
+end
+
 function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
     # TODO: compare: N=3, K=200, XLENGTH=4
     # TODO: previous RHS time 5.6s
     # TODO: current RHS time 1.9s
     # TODO: CFL condition
-    # TODO: vectorize Sr,Ss
     f_x,f_y,rholog,betalog,U_low,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr = prealloc
-    S0xJ_vec,S0yJ_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,Sr,Ss,MJ_inv,BrJ_halved,BsJ_halved,coeff_arr = ops
+    S0xJ_vec,S0yJ_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,SxJ_db_vec,SyJ_db_vec,Sr_nnzi,Sr_nnzj,Ss_nnzi,Ss_nnzj,MJ_inv,BrJ_halved,BsJ_halved,coeff_arr = ops
     mapP,Fmask,x,y = geom
 
     fill!(rhsU,0.0)
@@ -501,7 +593,6 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
             inflow,outflow,topflow,wall,has_bc = check_BC(xM,yM,i)
             rhoP,rhouP,rhovP,EP = get_consP(U,f_x,f_y,t,mapP,Fmask,i,iM,xM,yM,uM,vM,k,inflow,outflow,topflow,wall,has_bc)
             
-            # TODO: replace in with comparision
             # TODO: reuse interior calculations?
             if is_face_x(i)
                 λM = wavespeed_1D(rhoM,rhouM,EM)
@@ -538,7 +629,7 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
         fill!(U_low ,0.0)
         fill!(L     ,1.0)
 
-        # # Calculate low order algebraic flux
+        # Calculate low order algebraic flux
         for c_r = 1:S0r_nnz_hv
             i = S0r_nnzi[c_r]
             j = S0r_nnzj[c_r]
@@ -555,53 +646,19 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
             update_F_low!(F_low,k,tid,i,j,λ,S0yJ_ij,U,f_y)
         end
 
-
         # Calculate high order algebraic flux
-        # TODO: write in vec nnz form
-        for j = 2:Np
-            rho_j     = U[1,j,k]
-            rhou_j    = U[2,j,k]
-            rhov_j    = U[3,j,k]
-            E_j       = U[4,j,k]
-            p_j       = pfun(rho_j,rhou_j,rhov_j,E_j)
-            u_j       = rhou_j/rho_j
-            v_j       = rhov_j/rho_j
-            beta_j    = rho_j/(2*p_j)
-            rholog_j  = rholog[j,k]
-            betalog_j = betalog[j,k]
-            for i = 1:j-1
-                Sr_ij     = Sr[i,j]
-                Ss_ij     = Ss[i,j]
-                rho_i     = U[1,i,k]
-                rhou_i    = U[2,i,k]
-                rhov_i    = U[3,i,k]
-                E_i       = U[4,i,k]
-                p_i       = pfun(rho_i,rhou_i,rhov_i,E_i)
-                u_i       = rhou_i/rho_i
-                v_i       = rhov_i/rho_i
-                beta_i    = rho_i/(2*p_i)
-                rholog_i  = rholog[i,k]
-                betalog_i = betalog[i,k]
-                if Sr_ij != 0.0 || Ss_ij != 0.0
-                    Fx1,Fx2,Fx3,Fx4,Fy1,Fy2,Fy3,Fy4 = euler_fluxes_2D(rho_i,u_i,v_i,beta_i,rholog_i,betalog_i,
-                                                                      rho_j,u_j,v_j,beta_j,rholog_j,betalog_j)
+        for c_r = 1:Sr_nnz_hv
+            i         = Sr_nnzi[c_r]
+            j         = Sr_nnzj[c_r]
+            SxJ_ij_db = SxJ_db_vec[c_r]
+            update_F_high!(F_high,k,tid,i,j,SxJ_ij_db,U,rholog,betalog,0)
+        end
 
-                    FH1 = rxJ_db*Sr_ij*Fx1+syJ_db*Ss_ij*Fy1
-                    FH2 = rxJ_db*Sr_ij*Fx2+syJ_db*Ss_ij*Fy2
-                    FH3 = rxJ_db*Sr_ij*Fx3+syJ_db*Ss_ij*Fy3
-                    FH4 = rxJ_db*Sr_ij*Fx4+syJ_db*Ss_ij*Fy4
-
-                    F_high[1,i,j,tid] = FH1
-                    F_high[2,i,j,tid] = FH2
-                    F_high[3,i,j,tid] = FH3
-                    F_high[4,i,j,tid] = FH4
-
-                    F_high[1,j,i,tid] = -FH1
-                    F_high[2,j,i,tid] = -FH2
-                    F_high[3,j,i,tid] = -FH3
-                    F_high[4,j,i,tid] = -FH4
-                end
-            end
+        for c_r = 1:Sr_nnz_hv
+            i         = Ss_nnzi[c_r]
+            j         = Ss_nnzj[c_r]
+            SyJ_ij_db = SyJ_db_vec[c_r]
+            update_F_high!(F_high,k,tid,i,j,SyJ_ij_db,U,rholog,betalog,1)
         end
 
         # Calculate interface fluxes
@@ -831,10 +888,10 @@ for j = 2:Np
 end
 
 # Scale by Jacobian
-S0xJ_vec = rxJ*S0r_vec
-S0yJ_vec = syJ*S0s_vec
-SxJ_vec  = rxJ*Sr_vec
-SyJ_vec  = syJ*Ss_vec
+S0xJ_vec   = rxJ*S0r_vec
+S0yJ_vec   = syJ*S0s_vec
+SxJ_db_vec = 2*rxJ*Sr_vec
+SyJ_db_vec = 2*syJ*Ss_vec
 BrJ_halved = Jf*Br_halved
 BsJ_halved = Jf*Bs_halved
 
@@ -877,7 +934,9 @@ wspd_arr = zeros(Float64,Np,2,K)
 dii_arr  = zeros(Float64,Np)
 
 prealloc = (f_x,f_y,rholog,betalog,U_low,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr)
-ops      = (S0xJ_vec,S0yJ_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,Sr,Ss,MJ_inv,BrJ_halved,BsJ_halved,coeff_arr)
+ops      = (S0xJ_vec,  S0yJ_vec,  S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,
+            SxJ_db_vec,SyJ_db_vec,Sr_nnzi, Sr_nnzj, Ss_nnzi, Ss_nnzj,
+            MJ_inv,BrJ_halved,BsJ_halved,coeff_arr)
 geom     = (mapP,Fmask,x,y)
 
 
@@ -894,7 +953,7 @@ Vp = vandermonde_2D(N,rp,sp)/VDM
 gr(aspect_ratio=:equal,legend=false,
    markerstrokewidth=0,markersize=2)
 
-# #Timing
+# Timing
 # dt = dt0
 # @btime rhs_IDP_fixdt!($U,$rhsU,$t,$dt,$prealloc,$ops,$geom);
 # #@profiler rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom);
