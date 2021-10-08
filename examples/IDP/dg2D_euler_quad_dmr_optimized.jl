@@ -292,6 +292,13 @@ S0s = droptol!(sparse(kron(S01D,M1D)),TOL)
 Br = droptol!(sparse(Qr+Qr'),TOL)
 Bs = droptol!(sparse(Qs+Qs'),TOL)
 
+@inline function get_infoP(mapP,Fmask,i,k)
+    gP = mapP[i,k]           # exterior global face node number
+    kP = fld1(gP,Nfp)        # exterior element number
+    iP = Fmask[mod1(gP,Nfp)] # exterior node number
+    return iP,kP
+end
+
 @inline function check_BC(xM,yM,i)
     inflow  = ((abs(xM) < TOL) | ((xM < WALLPT) & (abs(yM) < TOL)) & ((i <= BOTTOMRIGHT) | (i > TOPLEFT)))
     outflow = ((abs(xM-XLENGTH) < TOL) & (abs(yM) > TOL) & (abs(yM-1.0) > TOL) & (i > BOTTOMRIGHT) & (i <= TOPRIGHT))
@@ -338,9 +345,7 @@ end
             EP     = ER
         end
     else                         # if not on the physical boundary
-        gP = mapP[i,k]           # exterior global face node number
-        kP = fld1(gP,Nfp)        # exterior element number
-        iP = Fmask[mod1(gP,Nfp)] # exterior node number
+        iP,kP = get_infoP(mapP,Fmask,i,k)
 
         rhoP  = U[1,iP,kP]
         rhouP = U[2,iP,kP]
@@ -402,9 +407,7 @@ end
             fy_4_P = fy4R
         end
     else                         # if not on the physical boundary
-        gP = mapP[i,k]           # exterior global face node number
-        kP = fld1(gP,Nfp)        # exterior element number
-        iP = Fmask[mod1(gP,Nfp)] # exterior node number
+        iP,kP = get_infoP(mapP,Fmask,i,k)
 
         fx_1_P = f_x[1,iP,kP]
         fx_2_P = f_x[2,iP,kP]
@@ -581,35 +584,29 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
             iM = Fmask[i]
             BrJ_ii_halved_abs = abs(BrJ_halved[iM])
             BsJ_ii_halved_abs = abs(BsJ_halved[iM])
-            rhoM  = U[1,iM,k]
-            rhouM = U[2,iM,k]
-            rhovM = U[3,iM,k]
-            EM    = U[4,iM,k]
-            uM    = rhouM/rhoM
-            vM    = rhovM/rhoM
             xM    = x[iM,k]
             yM    = y[iM,k]
 
             inflow,outflow,topflow,wall,has_bc = check_BC(xM,yM,i)
-            rhoP,rhouP,rhovP,EP = get_consP(U,f_x,f_y,t,mapP,Fmask,i,iM,xM,yM,uM,vM,k,inflow,outflow,topflow,wall,has_bc)
+            iP,kP = get_infoP(mapP,Fmask,i,k)
             
             # TODO: reuse interior calculations?
             if is_face_x(i)
-                λM = wavespeed_1D(rhoM,rhouM,EM)
-                λP = wavespeed_1D(rhoP,rhouP,EP)
                 if has_bc
                     λf_arr[i,k] = 0.0
                 else
+                    λM = wspd_arr[iM,1,k]
+                    λP = wspd_arr[iP,1,kP]
                     λf_arr[i,k] = max(λM,λP)*BrJ_ii_halved_abs
                 end
             end
 
             if is_face_y(i)
-                λM = wavespeed_1D(rhoM,rhovM,EM)
-                λP = wavespeed_1D(rhoP,rhovP,EP)
                 if has_bc
                     λf_arr[i,k] = 0.0
                 else
+                    λM = wspd_arr[iM,2,k]
+                    λP = wspd_arr[iP,2,kP]
                     λf_arr[i,k] = max(λM,λP)*BsJ_ii_halved_abs
                 end
             end
