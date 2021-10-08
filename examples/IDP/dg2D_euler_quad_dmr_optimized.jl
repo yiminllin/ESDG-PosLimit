@@ -590,7 +590,6 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
             inflow,outflow,topflow,wall,has_bc = check_BC(xM,yM,i)
             iP,kP = get_infoP(mapP,Fmask,i,k)
             
-            # TODO: reuse interior calculations?
             if is_face_x(i)
                 if has_bc
                     λf_arr[i,k] = 0.0
@@ -660,7 +659,6 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
 
         # Calculate interface fluxes
         for i = 1:Nfp
-            # TODO: some unnecessary variables
             iM    = Fmask[i]
             BrJ_ii_halved = BrJ_halved[iM]
             BsJ_ii_halved = BsJ_halved[iM]
