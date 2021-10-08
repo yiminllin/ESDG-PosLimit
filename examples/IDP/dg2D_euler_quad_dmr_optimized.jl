@@ -380,6 +380,14 @@ end
     return rhoP,rhouP,rhovP,EP,fx_1_P,fx_2_P,fx_3_P,fx_4_P,fy_1_P,fy_2_P,fy_3_P,fy_4_P,has_bc
 end
 
+@inline function is_face_x(i)
+    return (((i > BOTTOMRIGHT) & (i <= TOPRIGHT)) | (i > TOPLEFT))
+end
+
+@inline function is_face_y(i)
+    return (((i > TOPRIGHT) & (i <= TOPLEFT)) | (i <= BOTTOMRIGHT))
+end
+
 @inline function update_F_low!(F_low,k,tid,i,j,λ,S0J_ij,U,f)
     # Tensor product elements: f is f_x or f_y
     # S0J_ij - S0xJ_ij or S0yJ_ij
@@ -424,7 +432,7 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
     # TODO: vectorize Sr,Ss
     f_x,f_y,rholog,betalog,U_low,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr = prealloc
     S0xJ_vec,S0yJ_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,Sr,Ss,MJ_inv,BrJ_halved,BsJ_halved,coeff_arr = ops
-    mapP,Fmask,Fxmask,Fymask,x,y = geom
+    mapP,Fmask,x,y = geom
 
     fill!(rhsU,0.0)
 #    @batch for k = 1:K
@@ -495,7 +503,7 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
             
             # TODO: replace in with comparision
             # TODO: reuse interior calculations?
-            if i in Fxmask
+            if is_face_x(i)
                 λM = wavespeed_1D(rhoM,rhouM,EM)
                 λP = wavespeed_1D(rhoP,rhouP,EP)
                 if has_bc
@@ -505,7 +513,7 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
                 end
             end
 
-            if i in Fymask
+            if is_face_y(i)
                 λM = wavespeed_1D(rhoM,rhovM,EM)
                 λP = wavespeed_1D(rhoP,rhovP,EP)
                 if has_bc
@@ -623,7 +631,7 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
             λ = λf_arr[i,k]
 
             # flux in x direction
-            if i in Fxmask
+            if is_face_x(i)
                 F_P[1,i,tid] = (BrJ_ii_halved*(fx_1_M+fx_1_P)
                                -λ*(rhoP-rhoM) )
                 F_P[2,i,tid] = (BrJ_ii_halved*(fx_2_M+fx_2_P)
@@ -635,7 +643,7 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
             end
 
             # flux in y direction
-            if i in Fymask
+            if is_face_y(i)
                 F_P[1,i,tid] = (BsJ_ii_halved*(fy_1_M+fy_1_P)
                                -λ*(rhoP-rhoM) )
                 F_P[2,i,tid] = (BsJ_ii_halved*(fy_2_M+fy_2_P)
@@ -870,7 +878,7 @@ dii_arr  = zeros(Float64,Np)
 
 prealloc = (f_x,f_y,rholog,betalog,U_low,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr)
 ops      = (S0xJ_vec,S0yJ_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,Sr,Ss,MJ_inv,BrJ_halved,BsJ_halved,coeff_arr)
-geom     = (mapP,Fmask,Fxmask,Fymask,x,y)
+geom     = (mapP,Fmask,x,y)
 
 
 # Time stepping
