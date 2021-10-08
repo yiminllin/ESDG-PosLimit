@@ -146,8 +146,8 @@ const POSTOL = 1e-14
 const WALLPT = 1.0/6.0
 const Nc = 4 # number of components
 "Approximation parameters"
-N = 2
-K1D = 40
+N = 3
+K1D = 200
 T = 0.1
 dt0 = 1e-4
 const XLENGTH = 4#7.0/2.0
@@ -382,14 +382,51 @@ end
     return rhoP,rhouP,rhovP,EP,fx_1_P,fx_2_P,fx_3_P,fx_4_P,fy_1_P,fy_2_P,fy_3_P,fy_4_P,has_bc
 end
 
+@inline function update_F_low!(F_low,k,tid,i,j,λ,S0J_ij,U,f)
+    # Tensor product elements: f is f_x or f_y
+    # S0J_ij - S0xJ_ij or S0yJ_ij
+    rho_j  = U[1,j,k]
+    rhou_j = U[2,j,k]
+    rhov_j = U[3,j,k]
+    E_j    = U[4,j,k]
+    f_1_j  = f[1,j,k]
+    f_2_j  = f[2,j,k]
+    f_3_j  = f[3,j,k]
+    f_4_j  = f[4,j,k]
+    rho_i  = U[1,i,k]
+    rhou_i = U[2,i,k]
+    rhov_i = U[3,i,k]
+    E_i    = U[4,i,k]
+    f_1_i  = f[1,i,k]
+    f_2_i  = f[2,i,k]
+    f_3_i  = f[3,i,k]
+    f_4_i  = f[4,i,k]
+
+    # TODO: define variable S0xJ
+    FL1 = (S0J_ij*(f_1_i+f_1_j) - λ*(rho_j-rho_i))
+    FL2 = (S0J_ij*(f_2_i+f_2_j) - λ*(rhou_j-rhou_i))
+    FL3 = (S0J_ij*(f_3_i+f_3_j) - λ*(rhov_j-rhov_i))
+    FL4 = (S0J_ij*(f_4_i+f_4_j) - λ*(E_j-E_i))
+
+    F_low[1,i,j,tid] = FL1
+    F_low[2,i,j,tid] = FL2
+    F_low[3,i,j,tid] = FL3
+    F_low[4,i,j,tid] = FL4
+
+    F_low[1,j,i,tid] = -FL1
+    F_low[2,j,i,tid] = -FL2
+    F_low[3,j,i,tid] = -FL3
+    F_low[4,j,i,tid] = -FL4
+end
 
 function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
     # TODO: compare: N=3, K=200, XLENGTH=4
     # TODO: previous RHS time 5.6s
     # TODO: current RHS time 1.9s
     # TODO: CFL condition
-    f_x,f_y,rholog,betalog,U_low,F_low,F_high,F_P,L,λ_arr,λf_arr,dii_arr = prealloc
-    S0r,S0s,Sr,Ss,S0r_sq,S0s_sq,MJ_inv,Br_halved,Bs_halved,coeff_arr = ops
+    # TODO: vectorize Sr,Ss
+    f_x,f_y,rholog,betalog,U_low,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr = prealloc
+    S0r,S0s,S0r_vec,S0s_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,Sr,Ss,MJ_inv,Br_halved,Bs_halved,coeff_arr = ops
     mapP,Fmask,Fxmask,Fymask,x,y = geom
 
     fill!(rhsU,0.0)
@@ -420,15 +457,29 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
     for k = 1:K
         tid = Threads.threadid()
 
-        # # Interior wavespd, leading 2 - x and y directions 
-        # for i = 1:Np
-        #     rho_i  = U[1,i,k]
-        #     rhou_i = U[2,i,k]
-        #     rhov_i = U[3,i,k]
-        #     E_i    = U[4,i,k]
-        #     λ_arr[1,i,k] = wavespeed_1D(rho_i,rhou_i,E_i)
-        #     λ_arr[2,i,k] = wavespeed_1D(rho_i,rhov_i,E_i)
-        # end
+        # Interior wavespd, leading 2 - x and y directions 
+        for i = 1:Np
+            rho_i  = U[1,i,k]
+            rhou_i = U[2,i,k]
+            rhov_i = U[3,i,k]
+            E_i    = U[4,i,k]
+            wspd_arr[i,1,k] = wavespeed_1D(rho_i,rhou_i,E_i)
+            wspd_arr[i,2,k] = wavespeed_1D(rho_i,rhov_i,E_i)
+        end
+
+        # Interior dissipation coeff
+        # TODO: define S0x
+        for c_r = 1:S0r_nnz_hv
+            i = S0r_nnzi[c_r]
+            j = S0r_nnzj[c_r]
+            λ_arr[c_r,1,k] = abs(rxJ*S0r_vec[c_r])*max(wspd_arr[i,1,k],wspd_arr[j,1,k])
+        end
+
+        for c_s = 1:S0s_nnz_hv
+            i = S0s_nnzi[c_s]
+            j = S0s_nnzj[c_s]
+            λ_arr[c_s,2,k] = abs(syJ*S0s_vec[c_s])*max(wspd_arr[i,2,k],wspd_arr[j,2,k])
+        end
 
         # Interface dissipation coeff 
         for i = 1:Nfp
@@ -448,6 +499,7 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
             rhoP,rhouP,rhovP,EP = get_consP(U,f_x,f_y,t,mapP,Fmask,i,iM,xM,yM,uM,vM,k,inflow,outflow,topflow,wall,has_bc)
             
             # TODO: replace in with comparision
+            # TODO: reuse interior calculations?
             if i in Fxmask
                 λM = wavespeed_1D(rhoM,rhouM,EM)
                 λP = wavespeed_1D(rhoP,rhouP,EP)
@@ -483,75 +535,25 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
         fill!(U_low ,0.0)
         fill!(L     ,1.0)
 
-        # Calculate low order algebraic flux
-        for j = 2:Np
-            rho_j  = U[1,j,k]
-            rhou_j = U[2,j,k]
-            rhov_j = U[3,j,k]
-            E_j    = U[4,j,k]
-            fx_1_j = f_x[1,j,k]
-            fx_2_j = f_x[2,j,k]
-            fx_3_j = f_x[3,j,k]
-            fx_4_j = f_x[4,j,k]
-            fy_1_j = f_y[1,j,k]
-            fy_2_j = f_y[2,j,k]
-            fy_3_j = f_y[3,j,k]
-            fy_4_j = f_y[4,j,k]
-            for i = 1:j-1
-                S0r_ij    = S0r[i,j]
-                S0s_ij    = S0s[i,j]
-                S0r_ij_sq = S0r_sq[i,j]
-                S0s_ij_sq = S0s_sq[i,j]
-                rho_i  = U[1,i,k]
-                rhou_i = U[2,i,k]
-                rhov_i = U[3,i,k]
-                E_i    = U[4,i,k]
-                fx_1_i = f_x[1,i,k]
-                fx_2_i = f_x[2,i,k]
-                fx_3_i = f_x[3,i,k]
-                fx_4_i = f_x[4,i,k]
-                fy_1_i = f_y[1,i,k]
-                fy_2_i = f_y[2,i,k]
-                fy_3_i = f_y[3,i,k]
-                fy_4_i = f_y[4,i,k]
-
-                if S0r_ij != 0 || S0s_ij != 0
-                    # TODO: store n_ij?
-                    n_ij_norm = sqrt(rxJ_sq*S0r_ij_sq+syJ_sq*S0s_ij_sq)
-                    # TODO: reuse wavespd?
-                    # TODO: either [0;1] or [1;0]
-                    n_ij_x = rxJ*S0r_ij/n_ij_norm
-                    n_ij_y = syJ*S0s_ij/n_ij_norm
-                    λ_i = wavespeed_1D(rho_i,n_ij_x*rhou_i+n_ij_y*rhov_i,E_i)
-                    λ_j = wavespeed_1D(rho_j,n_ij_x*rhou_j+n_ij_y*rhov_j,E_j)
-                    λ_ij = max(λ_i,λ_j)*n_ij_norm
-
-                    FL1 = (rxJ*S0r_ij*(fx_1_i+fx_1_j)
-                          +syJ*S0s_ij*(fy_1_i+fy_1_j)
-                          -λ_ij*(rho_j-rho_i) )
-                    FL2 = (rxJ*S0r_ij*(fx_2_i+fx_2_j)
-                          +syJ*S0s_ij*(fy_2_i+fy_2_j)
-                          -λ_ij*(rhou_j-rhou_i) )
-                    FL3 = (rxJ*S0r_ij*(fx_3_i+fx_3_j)
-                          +syJ*S0s_ij*(fy_3_i+fy_3_j)
-                          -λ_ij*(rhov_j-rhov_i) )
-                    FL4 = (rxJ*S0r_ij*(fx_4_i+fx_4_j)
-                          +syJ*S0s_ij*(fy_4_i+fy_4_j)
-                          -λ_ij*(E_j-E_i) )
-
-
-                    F_low[1,i,j,tid] = FL1
-                    F_low[2,i,j,tid] = FL2
-                    F_low[3,i,j,tid] = FL3
-                    F_low[4,i,j,tid] = FL4
-
-                    F_low[1,j,i,tid] = -FL1
-                    F_low[2,j,i,tid] = -FL2
-                    F_low[3,j,i,tid] = -FL3
-                    F_low[4,j,i,tid] = -FL4
-                end
-            end
+        # # Calculate low order algebraic flux
+        # TODO: refactor with c_s
+        for c_r = 1:S0r_nnz_hv
+            i = S0r_nnzi[c_r]
+            j = S0r_nnzj[c_r]
+            λ = λ_arr[c_r,1,k]
+            S0r_ij = S0r_vec[c_r]
+            # TODO: define S0r_ij*rxJ
+            update_F_low!(F_low,k,tid,i,j,λ,S0r_ij*rxJ,U,f_x)
         end
+
+        for c_s = 1:S0s_nnz_hv
+            i = S0s_nnzi[c_s]
+            j = S0s_nnzj[c_s]
+            λ = λ_arr[c_s,2,k]
+            S0s_ij = S0s_vec[c_s]
+            update_F_low!(F_low,k,tid,i,j,λ,S0s_ij*syJ,U,f_y)
+        end
+
 
         # Calculate high order algebraic flux
         for j = 2:Np
@@ -676,6 +678,7 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
 
         # Calculate limiting parameters
         # TODO: skip diagonal
+        # TODO: skip zero entries
         for i = 1:Np
             coeff = coeff_arr[i]
             rhoL  = U_low[1,i,tid]
@@ -708,6 +711,7 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
             end
         end
 
+        # TODO: reorder, use l_e directly
         for c = 1:Nc
             for i = 1:Np
                 for j = 1:Np
@@ -759,13 +763,44 @@ Minv = Array(diag(Minv))
 MJ_inv    = Minv./J
 Br_halved = -sum(S0r,dims=2)
 Bs_halved = -sum(S0s,dims=2)
-S0r_sq    = S0r.^2
-S0s_sq    = S0s.^2
 coeff_arr = dt0*(Np-1).*Minv/J
 
 Fmask  = [1:N+1; (N+1):(N+1):Np; Np:-1:Np-N; Np-N:-(N+1):1]
 Fxmask = [(N+2):(2*N+2); (3*N+4):(4*N+4)]
 Fymask = [1:(N+1); (2*N+3):(3*N+3)]
+
+
+S0r_nnz = length(nonzeros(S0r))
+S0s_nnz = length(nonzeros(S0s))
+const S0r_nnz_hv = div(S0r_nnz,2)
+const S0s_nnz_hv = div(S0s_nnz,2)
+const S0_nnz_hv  = S0r_nnz_hv+S0s_nnz_hv
+S0r_vec  = zeros(S0r_nnz_hv)
+S0s_vec  = zeros(S0s_nnz_hv)
+S0r_nnzi = zeros(Int32,S0r_nnz_hv)
+S0s_nnzi = zeros(Int32,S0s_nnz_hv)
+S0r_nnzj = zeros(Int32,S0r_nnz_hv)
+S0s_nnzj = zeros(Int32,S0s_nnz_hv)
+global count_r = 1
+global count_s = 1
+for j = 2:Np
+    for i = 1:j-1
+        S0r_ij = S0r[i,j]
+        S0s_ij = S0s[i,j]
+        if S0r_ij != 0
+            global S0r_vec[count_r]  = S0r_ij
+            global S0r_nnzi[count_r] = i
+            global S0r_nnzj[count_r] = j
+            global count_r = count_r+1
+        end
+        if S0s_ij != 0
+            global S0s_vec[count_s]  = S0s_ij
+            global S0s_nnzi[count_s] = i
+            global S0s_nnzj[count_s] = j
+            global count_s = count_s+1
+        end
+    end
+end
 
 # 2D shocktube
 const TOP_INIT = (1+sqrt(3)/6)/sqrt(3)
@@ -801,12 +836,13 @@ F_low   = zeros(Float64,Nc,Np,Np,NUM_THREADS)
 F_high  = zeros(Float64,Nc,Np,Np,NUM_THREADS)
 F_P     = zeros(Float64,Nc,Nfp,NUM_THREADS)
 L       =  ones(Float64,Np,Np,NUM_THREADS)
-λ_arr   = zeros(Float64,2,Np,K)
-λf_arr  = zeros(Float64,Nfp,K)
-dii_arr = zeros(Float64,Np)
+wspd_arr = zeros(Float64,Np,2,K)
+λ_arr    = zeros(Float64,S0r_nnz_hv,2,K) # Assume S0r and S0s has same number of nonzero entries
+λf_arr   = zeros(Float64,Nfp,K)
+dii_arr  = zeros(Float64,Np)
 
-prealloc = (f_x,f_y,rholog,betalog,U_low,F_low,F_high,F_P,L,λ_arr,λf_arr,dii_arr)
-ops =    (S0r,S0s,Sr,Ss,S0r_sq,S0s_sq,MJ_inv,Br_halved,Bs_halved,coeff_arr)
+prealloc = (f_x,f_y,rholog,betalog,U_low,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr)
+ops =    (S0r,S0s,S0r_vec,S0s_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,Sr,Ss,MJ_inv,Br_halved,Bs_halved,coeff_arr)
 geom =  (mapP,Fmask,Fxmask,Fymask,x,y)
 
 
@@ -823,6 +859,7 @@ Vp = vandermonde_2D(N,rp,sp)/VDM
 gr(aspect_ratio=:equal,legend=false,
    markerstrokewidth=0,markersize=2)
 
+# #Timing
 # dt = dt0
 # @btime rhs_IDP_fixdt!($U,$rhsU,$t,$dt,$prealloc,$ops,$geom);
 # #@profiler rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom);
