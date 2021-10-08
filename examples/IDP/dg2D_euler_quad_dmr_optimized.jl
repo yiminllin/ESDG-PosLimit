@@ -23,7 +23,7 @@ include("../EntropyStableEuler.jl/src/logmean.jl")
 using EntropyStableEuler
 using EntropyStableEuler.Fluxes2D
 
-@muladd begin
+@muladd @inbounds begin
 
 @inline function pfun(rho,rhou,E)
     return (γ-1)*(E-.5*rhou^2/rho)
@@ -194,12 +194,12 @@ const POSTOL = 1e-14
 const WALLPT = 1.0/6.0
 const Nc = 4 # number of components
 "Approximation parameters"
-N = 2
-K1D = 30
-T = 0.1
-dt0 = 1e-4
+const N = 3
+const K1D = 250
+const T = 0.2
+const dt0 = 1e-3
 const XLENGTH = 7.0/2.0
-const CFL = 1.0
+const CFL = 0.75
 const NUM_THREADS = Threads.nthreads()
 const BOTTOMRIGHT = N+1
 const TOPRIGHT    = 2*(N+1)
@@ -522,18 +522,13 @@ end
     F_high[4,j,i,tid] = -FH4
 end
 
-function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
-    # TODO: compare: N=3, K=200, XLENGTH=4
-    # TODO: previous RHS time 5.6s
-    # TODO: current RHS time 1.9s
-    # TODO: CFL condition
+function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
     f_x,f_y,rholog,betalog,U_low,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr = prealloc
     S0xJ_vec,S0yJ_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,SxJ_db_vec,SyJ_db_vec,Sr_nnzi,Sr_nnzj,Ss_nnzi,Ss_nnzj,MJ_inv,BrJ_halved,BsJ_halved,coeff_arr,S_nnzi,S_nnzj = ops
     mapP,Fmask,x,y = geom
 
     fill!(rhsU,0.0)
-#    @batch for k = 1:K
-    for k = 1:K
+    @batch for k = 1:K
         for i = 1:Np
             rho  = U[1,i,k]
             rhou = U[2,i,k]
@@ -554,8 +549,7 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
     end
 
     # Precompute wavespeeds
-    # @batch for k = 1:K
-    for k = 1:K
+    @batch for k = 1:K
         tid = Threads.threadid()
 
         # Interior wavespd, leading 2 - x and y directions 
@@ -572,13 +566,21 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
         for c_r = 1:S0r_nnz_hv
             i = S0r_nnzi[c_r]
             j = S0r_nnzj[c_r]
-            λ_arr[c_r,1,k] = abs(S0xJ_vec[c_r])*max(wspd_arr[i,1,k],wspd_arr[j,1,k])
+            λ = abs(S0xJ_vec[c_r])*max(wspd_arr[i,1,k],wspd_arr[j,1,k])
+            λ_arr[c_r,1,k] = λ
+            if in_s1
+                dii_arr[i,k] = dii_arr[i,k] + λ
+            end
         end
 
         for c_s = 1:S0s_nnz_hv
             i = S0s_nnzi[c_s]
             j = S0s_nnzj[c_s]
-            λ_arr[c_s,2,k] = abs(S0yJ_vec[c_s])*max(wspd_arr[i,2,k],wspd_arr[j,2,k])
+            λ = abs(S0yJ_vec[c_s])*max(wspd_arr[i,2,k],wspd_arr[j,2,k])
+            λ_arr[c_s,2,k] = λ
+            if in_s1
+                dii_arr[i,k] = dii_arr[i,k] + λ
+            end
         end
 
         # Interface dissipation coeff 
@@ -598,7 +600,11 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
                 else
                     λM = wspd_arr[iM,1,k]
                     λP = wspd_arr[iP,1,kP]
-                    λf_arr[i,k] = max(λM,λP)*BrJ_ii_halved_abs
+                    λf = max(λM,λP)*BrJ_ii_halved_abs
+                    λf_arr[i,k] = λf
+                    if in_s1
+                        dii_arr[iM,k] = dii_arr[iM,k] + λf
+                    end
                 end
             end
 
@@ -608,8 +614,21 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
                 else
                     λM = wspd_arr[iM,2,k]
                     λP = wspd_arr[iP,2,kP]
-                    λf_arr[i,k] = max(λM,λP)*BsJ_ii_halved_abs
+                    λf = max(λM,λP)*BsJ_ii_halved_abs
+                    λf_arr[i,k] = λf
+                    if in_s1
+                        dii_arr[iM,k] = dii_arr[iM,k] + λf
+                    end
                 end
+            end
+        end
+    end
+
+    # If at the first stage, calculate the time step
+    if in_s1
+        @batch for k = 1:K
+            for i = 1:Np
+                dt = min(dt,1.0/MJ_inv[i]/2.0/dii_arr[i,k])
             end
         end
     end
@@ -617,8 +636,7 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
     # =====================
     # Loop through elements
     # =====================
-#    @batch for k = 1:K
-    for k = 1:K
+    @batch for k = 1:K
         tid = Threads.threadid()
         fill!(U_low ,0.0)
 
@@ -774,14 +792,15 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
         end
     end
 
-#    @batch for k = 1:K
-    for k = 1:K
+    @batch for k = 1:K
         for i = 1:Np
             for c = 1:Nc
                 rhsU[c,i,k] = MJ_inv[i]*rhsU[c,i,k]
             end
         end
     end
+
+    return dt
 end
 
 @unpack Vf,Dr,Ds,LIFT = rd
@@ -931,7 +950,7 @@ L       =  ones(Float64,S_nnz_hv,NUM_THREADS)
 wspd_arr = zeros(Float64,Np,2,K)
 λ_arr    = zeros(Float64,S0r_nnz_hv,2,K) # Assume S0r and S0s has same number of nonzero entries
 λf_arr   = zeros(Float64,Nfp,K)
-dii_arr  = zeros(Float64,Np)
+dii_arr  = zeros(Float64,Np,K)
 
 prealloc = (f_x,f_y,rholog,betalog,U_low,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr)
 ops      = (S0xJ_vec,  S0yJ_vec,  S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,
@@ -953,76 +972,79 @@ Vp = vandermonde_2D(N,rp,sp)/VDM
 gr(aspect_ratio=:equal,legend=false,
    markerstrokewidth=0,markersize=2)
 
-# #Timing
-# dt = dt0
-# #rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom);
-# @btime rhs_IDP_fixdt!($U,$rhsU,$t,$dt,$prealloc,$ops,$geom);
-# # @profiler rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom);
+#Timing
+dt = dt0
+#rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,true);
+@btime rhs_IDP!($U,$rhsU,$t,$dt,$prealloc,$ops,$geom,true);
+# @profiler rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,true);
 
-dt_hist = []
-i = 1
+# dt_hist = []
+# i = 1
 
-mapN = collect(reshape(1:Np*K,Np,K))
-inflow_nodal = mapN[findall(@. (abs(x) < TOL) | ((x < WALLPT) & (abs(y) < TOL)))]
-outflow_nodal = mapN[findall(@. abs(x-XLENGTH) < TOL)]
-topflow_nodal = mapN[findall(@. abs(y-1.) < TOL)]
+# mapN = collect(reshape(1:Np*K,Np,K))
+# inflow_nodal = mapN[findall(@. (abs(x) < TOL) | ((x < WALLPT) & (abs(y) < TOL)))]
+# outflow_nodal = mapN[findall(@. abs(x-XLENGTH) < TOL)]
+# topflow_nodal = mapN[findall(@. abs(y-1.) < TOL)]
 
-@inline function enforce_BC_timestep!(U,inflow_nodal,topflow_nodal,t)
-    for i = inflow_nodal
-        k = fld1(i,Np)
-        j = mod1(i,Np)
-        U[1,j,k] = rhoL
-        U[2,j,k] = rhouL
-        U[3,j,k] = rhovL
-        U[4,j,k] = EL
-    end
-    breakpoint = TOP_INIT+t*SHOCKSPD
-    for i = topflow_nodal
-        k = fld1(i,Np)
-        j = mod1(i,Np)
-        if x[i] < breakpoint
-            U[1,j,k] = rhoL
-            U[2,j,k] = rhouL
-            U[3,j,k] = rhovL
-            U[4,j,k] = EL
-        else
-            U[1,j,k] = rhoR
-            U[2,j,k] = rhouR
-            U[3,j,k] = rhovR
-            U[4,j,k] = ER
-        end
-    end
-end
+# @inline function enforce_BC_timestep!(U,inflow_nodal,topflow_nodal,t)
+#     for i = inflow_nodal
+#         k = fld1(i,Np)
+#         j = mod1(i,Np)
+#         U[1,j,k] = rhoL
+#         U[2,j,k] = rhouL
+#         U[3,j,k] = rhovL
+#         U[4,j,k] = EL
+#     end
+#     breakpoint = TOP_INIT+t*SHOCKSPD
+#     for i = topflow_nodal
+#         k = fld1(i,Np)
+#         j = mod1(i,Np)
+#         if x[i] < breakpoint
+#             U[1,j,k] = rhoL
+#             U[2,j,k] = rhouL
+#             U[3,j,k] = rhovL
+#             U[4,j,k] = EL
+#         else
+#             U[1,j,k] = rhoR
+#             U[2,j,k] = rhouR
+#             U[3,j,k] = rhovR
+#             U[4,j,k] = ER
+#         end
+#     end
+# end
 
 
-@time while t < T
-    # SSPRK(3,3)
-    dt = min(dt0,T-t)
-    rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom);
-    @. resW = U + dt*rhsU
-    rhs_IDP_fixdt!(resW,rhsU,t+dt,dt,prealloc,ops,geom);
-    @. resW = resW+dt*rhsU
-    @. resW = 3/4*U+1/4*resW
-    rhs_IDP_fixdt!(resW,rhsU,t+dt/2,dt,prealloc,ops,geom);
-    @. resW = resW+dt*rhsU
-    @. U = 1/3*U+2/3*resW
-    enforce_BC_timestep!(U,inflow_nodal,topflow_nodal,t+dt);
+# @time while t < T
+#     # SSPRK(3,3)
+#     fill!(dii_arr,0.0)
+#     # dt = min(dt0,T-t)
+#     dt = dt0
+#     dt = rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,true);
+#     dt = min(CFL*dt,T-t)
+#     @. resW = U + dt*rhsU
+#     rhs_IDP!(resW,rhsU,t+dt,dt,prealloc,ops,geom,false);
+#     @. resW = resW+dt*rhsU
+#     @. resW = 3/4*U+1/4*resW
+#     rhs_IDP!(resW,rhsU,t+dt/2,dt,prealloc,ops,geom,false);
+#     @. resW = resW+dt*rhsU
+#     @. U = 1/3*U+2/3*resW
+#     enforce_BC_timestep!(U,inflow_nodal,topflow_nodal,t+dt);
 
-    push!(dt_hist,dt)
-    global t = t + dt
-    println("Current time $t with time step size $dt, and final time $T, at step $i")
-    flush(stdout)
-    global i = i + 1
-end
+#     push!(dt_hist,dt)
+#     global t = t + dt
+#     println("Current time $t with time step size $dt, and final time $T, at step $i")
+#     flush(stdout)
+#     global i = i + 1
+# end
 
-xp = Vp*x
-yp = Vp*y
-vv = Vp*U[1,:,:]
-xp = vec(xp)
-yp = vec(yp)
-vv = vec(vv)
-scatter(xp,yp,vv,zcolor=vv,camera=(0,90),colorbar=:right)
-savefig("~/Desktop/N=$N,K1D=$K1D,T=$T,doubleMachReflection.png")
+# xp = Vp*x
+# yp = Vp*y
+# vv = Vp*U[1,:,:]
+# xp = vec(xp)
+# yp = vec(yp)
+# vv = vec(vv)
+# scatter(xp,yp,vv,zcolor=vv,camera=(0,90),colorbar=:right)
+# savefig("~/Desktop/N=$N,K1D=$K1D,T=$T,doubleMachReflection.png")
 
 
 
