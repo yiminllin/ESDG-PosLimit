@@ -146,11 +146,11 @@ const POSTOL = 1e-14
 const WALLPT = 1.0/6.0
 const Nc = 4 # number of components
 "Approximation parameters"
-N = 3
-K1D = 200
+N = 2
+K1D = 30
 T = 0.1
 dt0 = 1e-4
-const XLENGTH = 4#7.0/2.0
+const XLENGTH = 7.0/2.0
 const CFL = 1.0
 const NUM_THREADS = Threads.nthreads()
 const BOTTOMRIGHT = N+1
@@ -256,7 +256,6 @@ Bs = droptol!(sparse(Qs+Qs'),TOL)
 end
 
 @inline function get_consP(U,f_x,f_y,t,mapP,Fmask,i,iM,xM,yM,uM,vM,k,inflow,outflow,topflow,wall,has_bc)
-    # TODO: define constants
     if inflow
         rhoP   = rhoL
         rhouP  = rhouL
@@ -268,7 +267,7 @@ end
         rhovP  = U[3,iM,k]
         EP     = U[4,iM,k]
     elseif wall
-        # TODO: we assume the normals are [0;-1] here
+        # We assume the normals are [0;-1] here
         # Un = -u2 = -vM
         # Ut = -u1 = -uM
         # uP = -Ut = uM
@@ -307,7 +306,6 @@ end
 end
 
 @inline function get_fluxP(U,f_x,f_y,t,mapP,Fmask,i,iM,xM,yM,uM,vM,k,inflow,outflow,topflow,wall,has_bc,rhoP,rhouP,rhovP,EP)
-    # TODO: define constants
     if inflow
         fx_1_P = fx1L
         fx_2_P = fx2L
@@ -327,7 +325,7 @@ end
         fy_3_P = fy3R
         fy_4_P = fy4R
     elseif wall
-        # TODO: we assume the normals are [0;-1] here
+        # We assume the normals are [0;-1] here
         # Un = -u2 = -vM
         # Ut = -u1 = -uM
         # uP = -Ut = uM
@@ -402,7 +400,6 @@ end
     f_3_i  = f[3,i,k]
     f_4_i  = f[4,i,k]
 
-    # TODO: define variable S0xJ
     FL1 = (S0J_ij*(f_1_i+f_1_j) - λ*(rho_j-rho_i))
     FL2 = (S0J_ij*(f_2_i+f_2_j) - λ*(rhou_j-rhou_i))
     FL3 = (S0J_ij*(f_3_i+f_3_j) - λ*(rhov_j-rhov_i))
@@ -426,7 +423,7 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
     # TODO: CFL condition
     # TODO: vectorize Sr,Ss
     f_x,f_y,rholog,betalog,U_low,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr = prealloc
-    S0r,S0s,S0r_vec,S0s_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,Sr,Ss,MJ_inv,Br_halved,Bs_halved,coeff_arr = ops
+    S0xJ_vec,S0yJ_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,Sr,Ss,MJ_inv,BrJ_halved,BsJ_halved,coeff_arr = ops
     mapP,Fmask,Fxmask,Fymask,x,y = geom
 
     fill!(rhsU,0.0)
@@ -452,7 +449,6 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
     end
 
     # Precompute wavespeeds
-    # TODO: precompute dissipation coeff in one pass
     # @batch for k = 1:K
     for k = 1:K
         tid = Threads.threadid()
@@ -468,24 +464,23 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
         end
 
         # Interior dissipation coeff
-        # TODO: define S0x
         for c_r = 1:S0r_nnz_hv
             i = S0r_nnzi[c_r]
             j = S0r_nnzj[c_r]
-            λ_arr[c_r,1,k] = abs(rxJ*S0r_vec[c_r])*max(wspd_arr[i,1,k],wspd_arr[j,1,k])
+            λ_arr[c_r,1,k] = abs(S0xJ_vec[c_r])*max(wspd_arr[i,1,k],wspd_arr[j,1,k])
         end
 
         for c_s = 1:S0s_nnz_hv
             i = S0s_nnzi[c_s]
             j = S0s_nnzj[c_s]
-            λ_arr[c_s,2,k] = abs(syJ*S0s_vec[c_s])*max(wspd_arr[i,2,k],wspd_arr[j,2,k])
+            λ_arr[c_s,2,k] = abs(S0yJ_vec[c_s])*max(wspd_arr[i,2,k],wspd_arr[j,2,k])
         end
 
         # Interface dissipation coeff 
         for i = 1:Nfp
             iM = Fmask[i]
-            BrJ_ii_halved_abs = Jf*abs(Br_halved[iM])
-            BsJ_ii_halved_abs = Jf*abs(Bs_halved[iM])
+            BrJ_ii_halved_abs = abs(BrJ_halved[iM])
+            BsJ_ii_halved_abs = abs(BsJ_halved[iM])
             rhoM  = U[1,iM,k]
             rhouM = U[2,iM,k]
             rhovM = U[3,iM,k]
@@ -536,26 +531,25 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
         fill!(L     ,1.0)
 
         # # Calculate low order algebraic flux
-        # TODO: refactor with c_s
         for c_r = 1:S0r_nnz_hv
             i = S0r_nnzi[c_r]
             j = S0r_nnzj[c_r]
             λ = λ_arr[c_r,1,k]
-            S0r_ij = S0r_vec[c_r]
-            # TODO: define S0r_ij*rxJ
-            update_F_low!(F_low,k,tid,i,j,λ,S0r_ij*rxJ,U,f_x)
+            S0xJ_ij = S0xJ_vec[c_r]
+            update_F_low!(F_low,k,tid,i,j,λ,S0xJ_ij,U,f_x)
         end
 
         for c_s = 1:S0s_nnz_hv
             i = S0s_nnzi[c_s]
             j = S0s_nnzj[c_s]
             λ = λ_arr[c_s,2,k]
-            S0s_ij = S0s_vec[c_s]
-            update_F_low!(F_low,k,tid,i,j,λ,S0s_ij*syJ,U,f_y)
+            S0yJ_ij = S0yJ_vec[c_s]
+            update_F_low!(F_low,k,tid,i,j,λ,S0yJ_ij,U,f_y)
         end
 
 
         # Calculate high order algebraic flux
+        # TODO: write in vec nnz form
         for j = 2:Np
             rho_j     = U[1,j,k]
             rhou_j    = U[2,j,k]
@@ -606,9 +600,8 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
         for i = 1:Nfp
             # TODO: some unnecessary variables
             iM    = Fmask[i]
-            # TODO: precompute this!
-            BrJ_ii_halved = Jf*Br_halved[iM]
-            BsJ_ii_halved = Jf*Bs_halved[iM]
+            BrJ_ii_halved = BrJ_halved[iM]
+            BsJ_ii_halved = BsJ_halved[iM]
             xM    = x[iM,k]
             yM    = y[iM,k]
             rhoM  = U[1,iM,k]
@@ -772,39 +765,73 @@ Fymask = [1:(N+1); (2*N+3):(3*N+3)]
 
 S0r_nnz = length(nonzeros(S0r))
 S0s_nnz = length(nonzeros(S0s))
+Sr_nnz  = length(nonzeros(Sr))
+Ss_nnz  = length(nonzeros(Ss))
 const S0r_nnz_hv = div(S0r_nnz,2)
 const S0s_nnz_hv = div(S0s_nnz,2)
 const S0_nnz_hv  = S0r_nnz_hv+S0s_nnz_hv
+const Sr_nnz_hv  = div(Sr_nnz,2)
+const Ss_nnz_hv  = div(Ss_nnz,2)
+const S_nnz_hv   = Sr_nnz_hv+Ss_nnz_hv
 S0r_vec  = zeros(S0r_nnz_hv)
 S0s_vec  = zeros(S0s_nnz_hv)
 S0r_nnzi = zeros(Int32,S0r_nnz_hv)
 S0s_nnzi = zeros(Int32,S0s_nnz_hv)
 S0r_nnzj = zeros(Int32,S0r_nnz_hv)
 S0s_nnzj = zeros(Int32,S0s_nnz_hv)
-global count_r = 1
-global count_s = 1
+Sr_vec   = zeros(Sr_nnz_hv)
+Ss_vec   = zeros(Ss_nnz_hv)
+Sr_nnzi  = zeros(Int32,Sr_nnz_hv)
+Ss_nnzi  = zeros(Int32,Ss_nnz_hv)
+Sr_nnzj  = zeros(Int32,Sr_nnz_hv)
+Ss_nnzj  = zeros(Int32,Ss_nnz_hv)
+global count_r0 = 1
+global count_s0 = 1
+global count_r  = 1
+global count_s  = 1
 for j = 2:Np
     for i = 1:j-1
         S0r_ij = S0r[i,j]
         S0s_ij = S0s[i,j]
+        Sr_ij  = Sr[i,j]
+        Ss_ij  = Ss[i,j]
         if S0r_ij != 0
-            global S0r_vec[count_r]  = S0r_ij
-            global S0r_nnzi[count_r] = i
-            global S0r_nnzj[count_r] = j
-            global count_r = count_r+1
+            global S0r_vec[count_r0]  = S0r_ij
+            global S0r_nnzi[count_r0] = i
+            global S0r_nnzj[count_r0] = j
+            global count_r0 = count_r0+1
         end
         if S0s_ij != 0
-            global S0s_vec[count_s]  = S0s_ij
-            global S0s_nnzi[count_s] = i
-            global S0s_nnzj[count_s] = j
+            global S0s_vec[count_s0]  = S0s_ij
+            global S0s_nnzi[count_s0] = i
+            global S0s_nnzj[count_s0] = j
+            global count_s0 = count_s0+1
+        end
+        if Sr_ij != 0
+            global Sr_vec[count_r]  = Sr_ij
+            global Sr_nnzi[count_r] = i
+            global Sr_nnzj[count_r] = j
+            global count_r = count_r+1
+        end
+        if Ss_ij != 0
+            global Ss_vec[count_s]  = Ss_ij
+            global Ss_nnzi[count_s] = i
+            global Ss_nnzj[count_s] = j
             global count_s = count_s+1
         end
     end
 end
 
+# Scale by Jacobian
+S0xJ_vec = rxJ*S0r_vec
+S0yJ_vec = syJ*S0s_vec
+SxJ_vec  = rxJ*Sr_vec
+SyJ_vec  = syJ*Ss_vec
+BrJ_halved = Jf*Br_halved
+BsJ_halved = Jf*Bs_halved
+
 # 2D shocktube
 const TOP_INIT = (1+sqrt(3)/6)/sqrt(3)
-
 
 # Initial condition 2D shocktube
 at_left(x,y) = y-sqrt(3)*x+sqrt(3)/6 > 0.0
@@ -842,8 +869,8 @@ wspd_arr = zeros(Float64,Np,2,K)
 dii_arr  = zeros(Float64,Np)
 
 prealloc = (f_x,f_y,rholog,betalog,U_low,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr)
-ops =    (S0r,S0s,S0r_vec,S0s_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,Sr,Ss,MJ_inv,Br_halved,Bs_halved,coeff_arr)
-geom =  (mapP,Fmask,Fxmask,Fymask,x,y)
+ops      = (S0xJ_vec,S0yJ_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,Sr,Ss,MJ_inv,BrJ_halved,BsJ_halved,coeff_arr)
+geom     = (mapP,Fmask,Fxmask,Fymask,x,y)
 
 
 # Time stepping
