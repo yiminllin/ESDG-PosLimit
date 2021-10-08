@@ -168,12 +168,14 @@ end
 
     d = 1.0/(2.0*a)
     e = b^2-4.0*a*c
+    g = -b*d
 
     l_eps_ij = 1.0
     if e >= 0
         f = sqrt(e)
-        r1 = (-b+f)*d
-        r2 = (-b-f)*d
+        h = f*d
+        r1 = g+h
+        r2 = g-h
         if r1 > TOL && r2 > TOL
             l_eps_ij = min(r1,r2)
         elseif r1 > TOL && r2 < -TOL
@@ -526,7 +528,7 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
     # TODO: current RHS time 1.9s
     # TODO: CFL condition
     f_x,f_y,rholog,betalog,U_low,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr = prealloc
-    S0xJ_vec,S0yJ_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,SxJ_db_vec,SyJ_db_vec,Sr_nnzi,Sr_nnzj,Ss_nnzi,Ss_nnzj,MJ_inv,BrJ_halved,BsJ_halved,coeff_arr = ops
+    S0xJ_vec,S0yJ_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,SxJ_db_vec,SyJ_db_vec,Sr_nnzi,Sr_nnzj,Ss_nnzi,Ss_nnzj,MJ_inv,BrJ_halved,BsJ_halved,coeff_arr,S_nnzi,S_nnzj = ops
     mapP,Fmask,x,y = geom
 
     fill!(rhsU,0.0)
@@ -618,12 +620,7 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
 #    @batch for k = 1:K
     for k = 1:K
         tid = Threads.threadid()
-
-        fill!(F_low ,0.0)
-        fill!(F_high,0.0)
-        fill!(F_P   ,0.0)
         fill!(U_low ,0.0)
-        fill!(L     ,1.0)
 
         # Calculate low order algebraic flux
         for c_r = 1:S0r_nnz_hv
@@ -708,8 +705,8 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
         end
 
         # Calculate low order solution
-        for i = 1:Np
-            for j = 1:Np
+        for j = 1:Np
+            for i = 1:Np
                 for c = 1:Nc
                     U_low[c,i,tid] = U_low[c,i,tid] + F_low[c,i,j,tid]
                 end
@@ -723,56 +720,55 @@ function rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom)
             end
         end
 
-        for c = 1:Nc
-            for i = 1:Np
+        for i = 1:Np
+            for c = 1:Nc
                 U_low[c,i,tid] = U[c,i,k] - dt*MJ_inv[i]*U_low[c,i,tid]
             end
         end
 
         # Calculate limiting parameters
-        # TODO: skip diagonal
-        # TODO: skip zero entries
-        for i = 1:Np
+        for ni = 1:S_nnz_hv
+            i = S_nnzi[ni]
+            j = S_nnzj[ni]
             coeff = coeff_arr[i]
-            rhoL  = U_low[1,i,tid]
-            rhouL = U_low[2,i,tid]
-            rhovL = U_low[3,i,tid]
-            EL    = U_low[4,i,tid]
-            for j = 1:Np
-                if i != j
-                    rhoP  = coeff*(F_low[1,i,j,tid]-F_high[1,i,j,tid])
-                    rhouP = coeff*(F_low[2,i,j,tid]-F_high[2,i,j,tid])
-                    rhovP = coeff*(F_low[3,i,j,tid]-F_high[3,i,j,tid])
-                    EP    = coeff*(F_low[4,i,j,tid]-F_high[4,i,j,tid])
-                    L[i,j,tid] = limiting_param(rhoL,rhouL,rhovL,EL,rhoP,rhouP,rhovP,EP)
-                end
-            end
+            rhoi  = U_low[1,i,tid]
+            rhoui = U_low[2,i,tid]
+            rhovi = U_low[3,i,tid]
+            Ei    = U_low[4,i,tid]
+            rhoj  = U_low[1,j,tid]
+            rhouj = U_low[2,j,tid]
+            rhovj = U_low[3,j,tid]
+            Ej    = U_low[4,j,tid]
+            rhoP  = coeff*(F_low[1,i,j,tid]-F_high[1,i,j,tid])
+            rhouP = coeff*(F_low[2,i,j,tid]-F_high[2,i,j,tid])
+            rhovP = coeff*(F_low[3,i,j,tid]-F_high[3,i,j,tid])
+            EP    = coeff*(F_low[4,i,j,tid]-F_high[4,i,j,tid])
+            L[ni,tid] = min(limiting_param(rhoi,rhoui,rhovi,Ei, rhoP, rhouP, rhovP, EP),
+                            limiting_param(rhoj,rhouj,rhovj,Ej,-rhoP,-rhouP,-rhovP,-EP))
         end
 
         # Elementwise limiting
         l_e = 1.0
-        for j = 1:Np
-            for i = 1:Np
-                if i != j
-                    l_e = min(l_e,L[i,j,tid])
-                end
-            end
+        for i = 1:S_nnz_hv
+            l_e = min(l_e,L[i,tid])
         end
-        for j = 1:Np
-            for i = 1:Np
-                L[i,j,tid] = l_e
+        l_em1 = l_e-1.0
+
+        # TODO: reorder, use l_e directly
+        for ni = 1:S_nnz_hv
+            i     = S_nnzi[ni]
+            j     = S_nnzj[ni]
+            for c = 1:Nc
+                FL_ij = F_low[c,i,j,tid]
+                FH_ij = F_high[c,i,j,tid]
+                rhsU[c,i,k] = rhsU[c,i,k] + l_em1*FL_ij - l_e*FH_ij
+                rhsU[c,j,k] = rhsU[c,j,k] - l_em1*FL_ij + l_e*FH_ij
             end
         end
 
-        # TODO: reorder, use l_e directly
-        for c = 1:Nc
-            for i = 1:Np
-                for j = 1:Np
-                    rhsU[c,i,k] = rhsU[c,i,k] + (L[i,j,tid]-1)*F_low[c,i,j,tid]-L[i,j,tid]*F_high[c,i,j,tid]
-                end
-            end
-            for i = 1:Nfp
-                iM = Fmask[i]
+        for i = 1:Nfp
+            iM = Fmask[i]
+            for c = 1:Nc
                 rhsU[c,iM,k] = rhsU[c,iM,k] - F_P[c,i,tid]
             end
         end
@@ -845,10 +841,13 @@ Sr_nnzi  = zeros(Int32,Sr_nnz_hv)
 Ss_nnzi  = zeros(Int32,Ss_nnz_hv)
 Sr_nnzj  = zeros(Int32,Sr_nnz_hv)
 Ss_nnzj  = zeros(Int32,Ss_nnz_hv)
+S_nnzi   = zeros(Int32,S_nnz_hv)
+S_nnzj   = zeros(Int32,S_nnz_hv)
 global count_r0 = 1
 global count_s0 = 1
 global count_r  = 1
 global count_s  = 1
+global count    = 1
 for j = 2:Np
     for i = 1:j-1
         S0r_ij = S0r[i,j]
@@ -871,13 +870,19 @@ for j = 2:Np
             global Sr_vec[count_r]  = Sr_ij
             global Sr_nnzi[count_r] = i
             global Sr_nnzj[count_r] = j
+            global S_nnzi[count]    = i
+            global S_nnzj[count]    = j
             global count_r = count_r+1
+            global count   = count+1
         end
         if Ss_ij != 0
             global Ss_vec[count_s]  = Ss_ij
             global Ss_nnzi[count_s] = i
             global Ss_nnzj[count_s] = j
+            global S_nnzi[count]    = i
+            global S_nnzj[count]    = j
             global count_s = count_s+1
+            global count   = count+1
         end
     end
 end
@@ -922,7 +927,7 @@ U_low   = zeros(Float64,Nc,Np,NUM_THREADS)
 F_low   = zeros(Float64,Nc,Np,Np,NUM_THREADS)
 F_high  = zeros(Float64,Nc,Np,Np,NUM_THREADS)
 F_P     = zeros(Float64,Nc,Nfp,NUM_THREADS)
-L       =  ones(Float64,Np,Np,NUM_THREADS)
+L       =  ones(Float64,S_nnz_hv,NUM_THREADS)
 wspd_arr = zeros(Float64,Np,2,K)
 λ_arr    = zeros(Float64,S0r_nnz_hv,2,K) # Assume S0r and S0s has same number of nonzero entries
 λf_arr   = zeros(Float64,Nfp,K)
@@ -931,7 +936,7 @@ dii_arr  = zeros(Float64,Np)
 prealloc = (f_x,f_y,rholog,betalog,U_low,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr)
 ops      = (S0xJ_vec,  S0yJ_vec,  S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,
             SxJ_db_vec,SyJ_db_vec,Sr_nnzi, Sr_nnzj, Ss_nnzi, Ss_nnzj,
-            MJ_inv,BrJ_halved,BsJ_halved,coeff_arr)
+            MJ_inv,BrJ_halved,BsJ_halved,coeff_arr,S_nnzi,S_nnzj)
 geom     = (mapP,Fmask,x,y)
 
 
@@ -948,10 +953,11 @@ Vp = vandermonde_2D(N,rp,sp)/VDM
 gr(aspect_ratio=:equal,legend=false,
    markerstrokewidth=0,markersize=2)
 
-# Timing
+# #Timing
 # dt = dt0
+# #rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom);
 # @btime rhs_IDP_fixdt!($U,$rhsU,$t,$dt,$prealloc,$ops,$geom);
-# #@profiler rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom);
+# # @profiler rhs_IDP_fixdt!(U,rhsU,t,dt,prealloc,ops,geom);
 
 dt_hist = []
 i = 1
