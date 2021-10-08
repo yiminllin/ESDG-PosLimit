@@ -7,7 +7,6 @@ using BenchmarkTools
 using UnPack
 using StaticArrays
 using DelimitedFiles
-using CheapThreads
 
 push!(LOAD_PATH, "./src")
 using CommonUtils
@@ -18,7 +17,7 @@ using UniformQuadMesh
 using SetupDG
 
 push!(LOAD_PATH, "./examples/EntropyStableEuler.jl/src")
-include("../EntropyStableEuler.jl/src/logmean.jl")
+include("../../EntropyStableEuler.jl/src/logmean.jl")
 using EntropyStableEuler
 using EntropyStableEuler.Fluxes2D
 
@@ -83,7 +82,7 @@ const Nc = 4 # number of components
 
 "Approximation parameters"
 N = 3
-K1D = 50
+K1D = 250#50
 T = 0.2
 dt0 = 4e-6
 XLENGTH = 7/2
@@ -893,88 +892,88 @@ inflow_nodal = mapN[findall(@. (abs(x) < TOL) | ((x < 1/6) & (abs(y) < TOL)))]
 outflow_nodal = mapN[findall(@. abs(x-XLENGTH) < TOL)]
 topflow_nodal = mapN[findall(@. abs(y-1.) < TOL)]
 
-#dt = 1e-4
-#@btime rhs_IDP_fixdt!(U,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,face_idx,x_idx,y_idx,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,flux_x,flux_y,lam,LFc,Ub,dt,t);
+dt = 1e-4
+@btime rhs_IDP_fixdt!(U,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,face_idx,x_idx,y_idx,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,flux_x,flux_y,lam,LFc,Ub,dt,t);
 
-dt_hist = []
-anim = Animation()
-i = 1
+# # dt_hist = []
+# # anim = Animation()
+# # i = 1
 
-@time while t < T
-    # SSPRK(3,3)
-    #dt = min(dt0,T-t)
-    #rhsU = rhs_IDP_fixdt!(U,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,face_idx,x_idx,y_idx,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,flux_x,flux_y,lam,LFc,Ub,dt,t);
-    rhsU,dt = rhs_IDP_vardt!(U,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,face_idx,x_idx,y_idx,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,flux_x,flux_y,lam,LFc,Ub,t);
-    dt = min(CFL*dt,T-t)
-    @. resW = U + dt*rhsU
-    rhsU = rhs_IDP_fixdt!(resW,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,face_idx,x_idx,y_idx,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,flux_x,flux_y,lam,LFc,Ub,dt,t+dt);
-    @. resZ = resW+dt*rhsU
-    @. resW = 3/4*U+1/4*resZ
-    rhsU = rhs_IDP_fixdt!(resW,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,face_idx,x_idx,y_idx,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,flux_x,flux_y,lam,LFc,Ub,dt,t+dt/2);
-    @. resZ = resW+dt*rhsU
-    @. U = 1/3*U+2/3*resZ
-    enforce_BC_timestep!(U,inflow_nodal,topflow_nodal,t+dt)
+# @time while t < T
+#     # SSPRK(3,3)
+#     #dt = min(dt0,T-t)
+#     #rhsU = rhs_IDP_fixdt!(U,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,face_idx,x_idx,y_idx,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,flux_x,flux_y,lam,LFc,Ub,dt,t);
+#     rhsU,dt = rhs_IDP_vardt!(U,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,face_idx,x_idx,y_idx,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,flux_x,flux_y,lam,LFc,Ub,t);
+#     dt = min(CFL*dt,T-t)
+#     @. resW = U + dt*rhsU
+#     rhsU = rhs_IDP_fixdt!(resW,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,face_idx,x_idx,y_idx,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,flux_x,flux_y,lam,LFc,Ub,dt,t+dt);
+#     @. resZ = resW+dt*rhsU
+#     @. resW = 3/4*U+1/4*resZ
+#     rhsU = rhs_IDP_fixdt!(resW,N,K1D,Minv,Vf,nxJ,nyJ,Sr,Ss,S0r,S0s,S0r1,S0s1,mapP,face_idx,x_idx,y_idx,xf,inflow,outflow,topflow,wall,nx_wall,ny_wall,flux_x,flux_y,lam,LFc,Ub,dt,t+dt/2);
+#     @. resZ = resW+dt*rhsU
+#     @. U = 1/3*U+2/3*resZ
+#     enforce_BC_timestep!(U,inflow_nodal,topflow_nodal,t+dt)
 
-    push!(dt_hist,dt)
-    global t = t + dt
-    println("Current time $t with time step size $dt, and final time $T, at step $i")
-    flush(stdout)
-    global i = i + 1
+#     push!(dt_hist,dt)
+#     global t = t + dt
+#     println("Current time $t with time step size $dt, and final time $T, at step $i")
+#     flush(stdout)
+#     global i = i + 1
     
-    if mod(i,1000) == 1
-        #=
-        xp = x
-        yp = y
-        vv = U[1]
-        scatter(xp,yp,vv,zcolor=vv,camera=(0,90),colorbar=:right,c=:haline)
-        frame(anim)
-        =#
-        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rho,dmr.txt","w") do io
-            writedlm(io,U[1])
-        end
-        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhou,dmr.txt","w") do io
-            writedlm(io,U[2])
-        end
-        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhov,dmr.txt","w") do io
-            writedlm(io,U[3])
-        end
-        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,E,dmr.txt","w") do io
-            writedlm(io,U[4])
-        end
-    end
-end
+#     if mod(i,1000) == 1
+#         #=
+#         xp = x
+#         yp = y
+#         vv = U[1]
+#         scatter(xp,yp,vv,zcolor=vv,camera=(0,90),colorbar=:right,c=:haline)
+#         frame(anim)
+#         =#
+#         open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rho,dmr.txt","w") do io
+#             writedlm(io,U[1])
+#         end
+#         open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhou,dmr.txt","w") do io
+#             writedlm(io,U[2])
+#         end
+#         open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhov,dmr.txt","w") do io
+#             writedlm(io,U[3])
+#         end
+#         open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,E,dmr.txt","w") do io
+#             writedlm(io,U[4])
+#         end
+#     end
+# end
 
-################
-### Plotting ###
-################
+# ################
+# ### Plotting ###
+# ################
 
-#gif(anim,"~/Desktop/N=$N,K1D=$K1D,T=$T,doubleMachReflection.gif",fps=10)
+# #gif(anim,"~/Desktop/N=$N,K1D=$K1D,T=$T,doubleMachReflection.gif",fps=10)
 
-open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rho,dmr.txt","w") do io
-    writedlm(io,U[1])
-end
-open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhou,dmr.txt","w") do io
-    writedlm(io,U[2])
-end
-open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhov,dmr.txt","w") do io
-    writedlm(io,U[3])
-end
-open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,E,dmr.txt","w") do io
-    writedlm(io,U[4])
-end
-#=
-rho = U[1]
-rhou = U[2]
-rhov = U[3]
-E = U[4]
+# open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rho,dmr.txt","w") do io
+#     writedlm(io,U[1])
+# end
+# open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhou,dmr.txt","w") do io
+#     writedlm(io,U[2])
+# end
+# open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhov,dmr.txt","w") do io
+#     writedlm(io,U[3])
+# end
+# open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,E,dmr.txt","w") do io
+#     writedlm(io,U[4])
+# end
+# #=
+# rho = U[1]
+# rhou = U[2]
+# rhov = U[3]
+# E = U[4]
 
-# # scatter(x,y,U[1],zcolor=U[1],camera=(0,90),colorbar=:right)
-# xp = Vp*x
-# yp = Vp*y
-# vv = Vp*U[1]
-# scatter(xp,yp,vv,zcolor=vv,camera=(0,90),colorbar=:right)
-scatter(x,y,rho,zcolor=rho,camera=(0,90),colorbar=:right)
-#savefig("/expanse/lustre/scratch/yiminlin/temp_project/N=$N,K1D=$K1D,T=$T,doubleMachReflection.png")
-savefig("~/Desktop/N=$N,K1D=$K1D,T=$T,doubleMachReflection.png")
-#scatter(xp,yp,exact_rho_p,zcolor=exact_rho_p,camera=(0,90),colorbar=:right)
-=#
+# # # scatter(x,y,U[1],zcolor=U[1],camera=(0,90),colorbar=:right)
+# # xp = Vp*x
+# # yp = Vp*y
+# # vv = Vp*U[1]
+# # scatter(xp,yp,vv,zcolor=vv,camera=(0,90),colorbar=:right)
+# scatter(x,y,rho,zcolor=rho,camera=(0,90),colorbar=:right)
+# #savefig("/expanse/lustre/scratch/yiminlin/temp_project/N=$N,K1D=$K1D,T=$T,doubleMachReflection.png")
+# savefig("~/Desktop/N=$N,K1D=$K1D,T=$T,doubleMachReflection.png")
+# #scatter(xp,yp,exact_rho_p,zcolor=exact_rho_p,camera=(0,90),colorbar=:right)
+# =#
