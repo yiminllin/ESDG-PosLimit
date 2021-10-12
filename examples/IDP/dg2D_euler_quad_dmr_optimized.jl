@@ -197,7 +197,7 @@ const Nc = 4 # number of components
 const N = 3
 const K1D = 250
 const T = 0.2
-const dt0 = 1e-3
+const dt0 = 1e-5
 const XLENGTH = 7.0/2.0
 const CFL = 0.75
 const NUM_THREADS = Threads.nthreads()
@@ -317,10 +317,10 @@ end
         rhovP  = rhovL
         EP     = EL
     elseif outflow
-        rhoP   = U[1,iM,k]
-        rhouP  = U[2,iM,k]
-        rhovP  = U[3,iM,k]
-        EP     = U[4,iM,k]
+        rhoP   = rhoR
+        rhouP  = rhouR
+        rhovP  = rhovR
+        EP     = ER
     elseif wall
         # We assume the normals are [0;-1] here
         # Un = -u2 = -vM
@@ -582,8 +582,10 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
                 dii_arr[i,k] = dii_arr[i,k] + λ
             end
         end
+    end
 
-        # Interface dissipation coeff 
+    # Interface dissipation coeff 
+    @batch for k = 1:K
         for i = 1:Nfp
             iM = Fmask[i]
             BrJ_ii_halved_abs = abs(BrJ_halved[iM])
@@ -595,7 +597,8 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
             iP,kP = get_infoP(mapP,Fmask,i,k)
             
             if is_face_x(i)
-                if has_bc
+                # if has_bc
+                if inflow | outflow | topflow
                     λf_arr[i,k] = 0.0
                 else
                     λM = wspd_arr[iM,1,k]
@@ -609,7 +612,8 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
             end
 
             if is_face_y(i)
-                if has_bc
+                # if has_bc
+                if inflow | outflow | topflow
                     λf_arr[i,k] = 0.0
                 else
                     λM = wspd_arr[iM,2,k]
@@ -626,7 +630,7 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
 
     # If at the first stage, calculate the time step
     if in_s1
-        @batch for k = 1:K
+        for k = 1:K
             for i = 1:Np
                 dt = min(dt,1.0/MJ_inv[i]/2.0/dii_arr[i,k])
             end
@@ -638,7 +642,11 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
     # =====================
     @batch for k = 1:K
         tid = Threads.threadid()
-        fill!(U_low ,0.0)
+        for i = 1:Np
+            for c = 1:Nc
+                U_low[c,i,tid] = 0.0
+            end
+        end
 
         # Calculate low order algebraic flux
         for c_r = 1:S0r_nnz_hv
@@ -748,7 +756,8 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
         for ni = 1:S_nnz_hv
             i = S_nnzi[ni]
             j = S_nnzj[ni]
-            coeff = coeff_arr[i]
+            coeff_i = dt*coeff_arr[i]
+            coeff_j = dt*coeff_arr[j]
             rhoi  = U_low[1,i,tid]
             rhoui = U_low[2,i,tid]
             rhovi = U_low[3,i,tid]
@@ -757,28 +766,39 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
             rhouj = U_low[2,j,tid]
             rhovj = U_low[3,j,tid]
             Ej    = U_low[4,j,tid]
-            rhoP  = coeff*(F_low[1,i,j,tid]-F_high[1,i,j,tid])
-            rhouP = coeff*(F_low[2,i,j,tid]-F_high[2,i,j,tid])
-            rhovP = coeff*(F_low[3,i,j,tid]-F_high[3,i,j,tid])
-            EP    = coeff*(F_low[4,i,j,tid]-F_high[4,i,j,tid])
-            L[ni,tid] = min(limiting_param(rhoi,rhoui,rhovi,Ei, rhoP, rhouP, rhovP, EP),
-                            limiting_param(rhoj,rhouj,rhovj,Ej,-rhoP,-rhouP,-rhovP,-EP))
+            rhoP  = (F_low[1,i,j,tid]-F_high[1,i,j,tid])
+            rhouP = (F_low[2,i,j,tid]-F_high[2,i,j,tid])
+            rhovP = (F_low[3,i,j,tid]-F_high[3,i,j,tid])
+            EP    = (F_low[4,i,j,tid]-F_high[4,i,j,tid])
+            rhoP_i  = coeff_i*rhoP  
+            rhouP_i = coeff_i*rhouP 
+            rhovP_i = coeff_i*rhovP 
+            EP_i    = coeff_i*EP    
+            rhoP_j  = -coeff_j*rhoP  
+            rhouP_j = -coeff_j*rhouP 
+            rhovP_j = -coeff_j*rhovP 
+            EP_j    = -coeff_j*EP
+            L[ni,tid] = min(limiting_param(rhoi,rhoui,rhovi,Ei,rhoP_i,rhouP_i,rhovP_i,EP_i),
+                            limiting_param(rhoj,rhouj,rhovj,Ej,rhoP_j,rhouP_j,rhovP_j,EP_j))
         end
 
-        # Elementwise limiting
-        l_e = 1.0
-        for i = 1:S_nnz_hv
-            l_e = min(l_e,L[i,tid])
-        end
-        l_em1 = l_e-1.0
+        # # Elementwise limiting
+        # l_e = 1.0
+        # for i = 1:S_nnz_hv
+        #     l_e = min(l_e,L[i,tid])
+        # end
+        # l_em1 = l_e-1.0
 
-        # TODO: reorder, use l_e directly
         for ni = 1:S_nnz_hv
             i     = S_nnzi[ni]
             j     = S_nnzj[ni]
             for c = 1:Nc
                 FL_ij = F_low[c,i,j,tid]
                 FH_ij = F_high[c,i,j,tid]
+                # rhsU[c,i,k] = rhsU[c,i,k] + l_em1*FL_ij - l_e*FH_ij
+                # rhsU[c,j,k] = rhsU[c,j,k] - l_em1*FL_ij + l_e*FH_ij
+                l_e   = L[ni,tid]
+                l_em1 = L[ni,tid]-1.0 
                 rhsU[c,i,k] = rhsU[c,i,k] + l_em1*FL_ij - l_e*FH_ij
                 rhsU[c,j,k] = rhsU[c,j,k] - l_em1*FL_ij + l_e*FH_ij
             end
@@ -831,7 +851,7 @@ Minv = Array(diag(Minv))
 MJ_inv    = Minv./J
 Br_halved = -sum(S0r,dims=2)
 Bs_halved = -sum(S0s,dims=2)
-coeff_arr = dt0*(Np-1).*Minv/J
+coeff_arr = 2*N*MJ_inv
 
 Fmask  = [1:N+1; (N+1):(N+1):Np; Np:-1:Np-N; Np-N:-(N+1):1]
 Fxmask = [(N+2):(2*N+2); (3*N+4):(4*N+4)]
@@ -972,83 +992,159 @@ Vp = vandermonde_2D(N,rp,sp)/VDM
 gr(aspect_ratio=:equal,legend=false,
    markerstrokewidth=0,markersize=2)
 
+#=
 #Timing
 dt = dt0
 #rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,true);
 @btime rhs_IDP!($U,$rhsU,$t,$dt,$prealloc,$ops,$geom,true);
 # @profiler rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,true);
+=#
 
-# dt_hist = []
-# i = 1
+dt_hist = []
+i = 1
 
-# mapN = collect(reshape(1:Np*K,Np,K))
-# inflow_nodal = mapN[findall(@. (abs(x) < TOL) | ((x < WALLPT) & (abs(y) < TOL)))]
-# outflow_nodal = mapN[findall(@. abs(x-XLENGTH) < TOL)]
-# topflow_nodal = mapN[findall(@. abs(y-1.) < TOL)]
+mapN = collect(reshape(1:Np*K,Np,K))
+inflow_nodal = mapN[findall(@. (abs(x) < TOL) | ((x < WALLPT) & (abs(y) < TOL)))]
+outflow_nodal = mapN[findall(@. abs(x-XLENGTH) < TOL)]
+topflow_nodal = mapN[findall(@. abs(y-1.) < TOL)]
 
-# @inline function enforce_BC_timestep!(U,inflow_nodal,topflow_nodal,t)
-#     for i = inflow_nodal
-#         k = fld1(i,Np)
-#         j = mod1(i,Np)
-#         U[1,j,k] = rhoL
-#         U[2,j,k] = rhouL
-#         U[3,j,k] = rhovL
-#         U[4,j,k] = EL
-#     end
-#     breakpoint = TOP_INIT+t*SHOCKSPD
-#     for i = topflow_nodal
-#         k = fld1(i,Np)
-#         j = mod1(i,Np)
-#         if x[i] < breakpoint
-#             U[1,j,k] = rhoL
-#             U[2,j,k] = rhouL
-#             U[3,j,k] = rhovL
-#             U[4,j,k] = EL
-#         else
-#             U[1,j,k] = rhoR
-#             U[2,j,k] = rhouR
-#             U[3,j,k] = rhovR
-#             U[4,j,k] = ER
-#         end
+@inline function enforce_BC_timestep!(U,inflow_nodal,topflow_nodal,t)
+    for i = inflow_nodal
+        k = fld1(i,Np)
+        j = mod1(i,Np)
+        U[1,j,k] = rhoL
+        U[2,j,k] = rhouL
+        U[3,j,k] = rhovL
+        U[4,j,k] = EL
+    end
+    for i = outflow_nodal
+        k = fld1(i,Np)
+        j = mod1(i,Np)
+        U[1,j,k] = rhoR
+        U[2,j,k] = rhouR
+        U[3,j,k] = rhovR
+        U[4,j,k] = ER
+    end
+    breakpoint = TOP_INIT+t*SHOCKSPD
+    for i = topflow_nodal
+        k = fld1(i,Np)
+        j = mod1(i,Np)
+        if x[i] < breakpoint
+            U[1,j,k] = rhoL
+            U[2,j,k] = rhouL
+            U[3,j,k] = rhovL
+            U[4,j,k] = EL
+        else
+            U[1,j,k] = rhoR
+            U[2,j,k] = rhouR
+            U[3,j,k] = rhovR
+            U[4,j,k] = ER
+        end
+    end
+end
+
+open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,x,dmr.txt","w") do io
+    writedlm(io,x)
+end
+open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,y,dmr.txt","w") do io
+    writedlm(io,y)
+end
+
+@time while t < T
+#while i < 2
+    # SSPRK(3,3)
+    fill!(dii_arr,0.0)
+    # dt = min(dt0,T-t)
+    dt = dt0
+    dt = rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,true);
+    dt = min(CFL*dt,T-t)
+    @. resW = U + dt*rhsU
+    rhs_IDP!(resW,rhsU,t+dt,dt,prealloc,ops,geom,false);
+    @. resW = resW+dt*rhsU
+    @. resW = 3/4*U+1/4*resW
+    rhs_IDP!(resW,rhsU,t+dt/2,dt,prealloc,ops,geom,false);
+    @. resW = resW+dt*rhsU
+    @. U = 1/3*U+2/3*resW
+    enforce_BC_timestep!(U,inflow_nodal,topflow_nodal,t+dt);
+
+    push!(dt_hist,dt)
+    global t = t + dt
+    println("Current time $t with time step size $dt, and final time $T, at step $i")
+    flush(stdout)
+    global i = i + 1
+    # if ((mod(i,100) == 1) | (i >= 55))
+    if (mod(i,100) == 1)
+        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rho,dmr.txt","w") do io
+            writedlm(io,U[1,:,:])
+        end
+        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhou,dmr.txt","w") do io
+            writedlm(io,U[2,:,:])
+        end
+        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhov,dmr.txt","w") do io
+            writedlm(io,U[3,:,:])
+        end
+        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,E,dmr.txt","w") do io
+            writedlm(io,U[4,:,:])
+        end
+
+        # # TODO: 
+        # for k = 1:K 
+        #     for i = 1:Np
+        #         if x[i,k] > 3.3
+        #             U[1,i,k] = rhoR
+        #             U[2,i,k] = rhouR
+        #             U[3,i,k] = rhovR
+        #             U[4,i,k] = ER
+        #         end
+        #     end
+        # end
+    end
+end
+
+open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rho,dmr.txt","w") do io
+    writedlm(io,U[1,:,:])
+end
+open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhou,dmr.txt","w") do io
+    writedlm(io,U[2,:,:])
+end
+open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhov,dmr.txt","w") do io
+    writedlm(io,U[3,:,:])
+end
+open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,E,dmr.txt","w") do io
+    writedlm(io,U[4,:,:])
+end
+
+#=
+xp = Vp*x
+yp = Vp*y
+vv = Vp*U[1,:,:]
+xp = vec(xp)
+yp = vec(yp)
+vv = vec(vv)
+scatter(xp,yp,vv,zcolor=vv,camera=(0,90),colorbar=:right)
+savefig("~/Desktop/N=$N,K1D=$K1D,T=$T,doubleMachReflection.png")
+=#
+
+# p = zeros(Np,K)
+# for k = 1:K
+#     for i = 1:Np
+#         p[i,k] = pfun(U[1,i,k],U[2,i,k],U[3,i,k],U[4,i,k])
 #     end
 # end
 
+# @show sum(U[1,:,:] .< POSTOL)
+# @show sum(p .< POSTOL)
+# dt = dt0
+# dt = rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,true);
+# dt = min(CFL*dt,T-t)
+# @. resW = U + dt*rhsU
 
-# @time while t < T
-#     # SSPRK(3,3)
-#     fill!(dii_arr,0.0)
-#     # dt = min(dt0,T-t)
-#     dt = dt0
-#     dt = rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,true);
-#     dt = min(CFL*dt,T-t)
-#     @. resW = U + dt*rhsU
-#     rhs_IDP!(resW,rhsU,t+dt,dt,prealloc,ops,geom,false);
-#     @. resW = resW+dt*rhsU
-#     @. resW = 3/4*U+1/4*resW
-#     rhs_IDP!(resW,rhsU,t+dt/2,dt,prealloc,ops,geom,false);
-#     @. resW = resW+dt*rhsU
-#     @. U = 1/3*U+2/3*resW
-#     enforce_BC_timestep!(U,inflow_nodal,topflow_nodal,t+dt);
-
-#     push!(dt_hist,dt)
-#     global t = t + dt
-#     println("Current time $t with time step size $dt, and final time $T, at step $i")
-#     flush(stdout)
-#     global i = i + 1
-# end
-
-# xp = Vp*x
-# yp = Vp*y
-# vv = Vp*U[1,:,:]
-# xp = vec(xp)
-# yp = vec(yp)
-# vv = vec(vv)
-# scatter(xp,yp,vv,zcolor=vv,camera=(0,90),colorbar=:right)
-# savefig("~/Desktop/N=$N,K1D=$K1D,T=$T,doubleMachReflection.png")
-
-
-
-
-
+# # for k = 1:K
+# #     for i = 1:Np
+# #         p[i,k] = pfun(resW[1,i,k],resW[2,i,k],resW[3,i,k],resW[4,i,k])
+# #     end
+# # end
+# # @show sum(resW[1,:,:] .< POSTOL)
+# # @show sum(p .< POSTOL)
 
 end #muladd
