@@ -294,7 +294,7 @@ const WALLPT = 1.0/6.0
 const Nc = 4 # number of components
 "Approximation parameters"
 const N = 3
-const K1D = 20#300#250
+const K1D = 250#300#250
 const T = 1.0#0.2
 # const dt0 = 1e-5
 const dt0 = 0.2
@@ -342,6 +342,8 @@ const v1R,v2R,v3R,v4R = entropyvar(rhoR,rhouR,rhovR,ER)
 VX, VY, EToV = uniform_quad_mesh(2*K1D,K1D)
 @. VX = ((VX+1)/2)^(.25)
 @. VY = ((VY+1)/2)^(2)/2
+# @. VX = ((VX+1)/2)
+# @. VY = ((VY+1)/2)/2
 
 rd = init_reference_quad(N,gauss_lobatto_quad(0,0,N))
 "Initialize reference element"
