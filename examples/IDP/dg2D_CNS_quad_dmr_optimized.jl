@@ -448,7 +448,7 @@ end
 
 @inline function check_BC(xM,yM,i)
     inflow  = ((abs(xM) < TOL) | ((xM < WALLPT) & (abs(yM) < TOL)) & ((i <= BOTTOMRIGHT) | (i > TOPLEFT)))
-    outflow = ((abs(xM-XLENGTH) < TOL) & (abs(yM) > TOL) & (abs(yM-1.0) > TOL) & (i > BOTTOMRIGHT) & (i <= TOPRIGHT))
+    outflow = ((abs(xM-XLENGTH) < TOL) & (i > BOTTOMRIGHT) & (i <= TOPRIGHT))
     topflow = ((abs(yM-1.0) < TOL) & (i > TOPRIGHT) & (i <= TOPLEFT))
     wall    = ((xM >= WALLPT) & (abs(yM) < TOL) & (i <= BOTTOMRIGHT))
     has_bc  = (inflow | outflow | topflow | wall)
@@ -1180,8 +1180,8 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
                 rhsU[c,j,k] = rhsU[c,j,k] - l_em1*FL_ij + l_e*FH_ij
                 # l_e   = L[ni,tid]
                 # l_em1 = L[ni,tid]-1.0 
-                # l_e = 0.0
-                # l_em1 = -1.0
+                # # l_e = 0.0
+                # # l_em1 = -1.0
                 # rhsU[c,i,k] = rhsU[c,i,k] + l_em1*FL_ij - l_e*FH_ij
                 # rhsU[c,j,k] = rhsU[c,j,k] - l_em1*FL_ij + l_e*FH_ij
             end
@@ -1439,6 +1439,26 @@ open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,y,dmr.txt","w") do io
     writedlm(io,y)
 end
 
+# t=0.14133073085796596
+# rho = readdlm("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rho,dmr.txt")
+# rhou = readdlm("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhou,dmr.txt")
+# rhov = readdlm("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhov,dmr.txt")
+# E = readdlm("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,E,dmr.txt")
+# U[1,:,:] = rho
+# U[2,:,:] = rhou
+# U[3,:,:] = rhov
+# U[4,:,:] = E
+# for k = 1:K 
+#     for i = 1:Np
+#         if x[i,k] > 3.3
+#             U[1,i,k] = rhoR
+#             U[2,i,k] = rhouR
+#             U[3,i,k] = rhovR
+#             U[4,i,k] = ER
+#         end
+#     end
+# end
+
 @time while t < T
 #while i < 2
     # SSPRK(3,3)
@@ -1486,17 +1506,17 @@ end
         #     writedlm(io,sigma_y)
         # end
 
-        # # TODO: 
-        # for k = 1:K 
-        #     for i = 1:Np
-        #         if x[i,k] > 3.3
-        #             U[1,i,k] = rhoR
-        #             U[2,i,k] = rhouR
-        #             U[3,i,k] = rhovR
-        #             U[4,i,k] = ER
-        #         end
-        #     end
-        # end
+        # TODO: 
+        for k = 1:K 
+            for i = 1:Np
+                if x[i,k] > 3.3
+                    U[1,i,k] = rhoR
+                    U[2,i,k] = rhouR
+                    U[3,i,k] = rhovR
+                    U[4,i,k] = ER
+                end
+            end
+        end
     end
 end
 
