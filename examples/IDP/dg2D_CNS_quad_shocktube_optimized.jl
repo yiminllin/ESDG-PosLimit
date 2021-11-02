@@ -849,15 +849,27 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
             BsJ_ii_halved_abs = abs(sJ_ik*Bs_halved[iM])
             xM    = x[iM,k]
             yM    = y[iM,k]
+            uM    = U[2,iM,k]/U[1,iM,k]
+            vM    = U[3,iM,k]/U[1,iM,k]
 
-            #inflow,outflow,topflow,wall,has_bc = check_BC(xM,yM,i)
             topwall,leftwall,rightwall,bottomwall,has_bc = check_BC(xM,yM,i)
             iP,kP = get_infoP(mapP,Fmask,i,k)
+            rhoP,rhouP,rhovP,EP,fx_1_P,fx_2_P,fx_3_P,fx_4_P,fy_1_P,fy_2_P,fy_3_P,fy_4_P,
+            sigmax_1_P,sigmax_2_P,sigmax_3_P,sigmax_4_P,sigmay_1_P,sigmay_2_P,sigmay_3_P,sigmay_4_P,has_bc = get_valP(U,f_x,f_y,sigma_x,sigma_y,t,mapP,Fmask,i,iM,xM,yM,uM,vM,k)
             
             if is_face_x(i)
                 if has_bc
-                # if inflow | outflow | topflow
-                    λf_arr[i,k] = 0.0
+                    # λf_arr[i,k] = 0.0
+                    λM = wspd_arr[iM,1,k]
+                    λP = zhang_wavespd(rhoP,rhouP,rhovP,EP,
+                                       sigmax_2_P,sigmax_3_P,sigmax_4_P,
+                                       sigmay_2_P,sigmay_3_P,sigmay_4_P,
+                                       1,0)
+                    λf = max(λM,λP)*BrJ_ii_halved_abs
+                    λf_arr[i,k] = λf
+                    if in_s1
+                        dii_arr[iM,k] = dii_arr[iM,k] + λf
+                    end
                 else
                     λM = wspd_arr[iM,1,k]
                     λP = wspd_arr[iP,1,kP]
@@ -871,8 +883,18 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
 
             if is_face_y(i)
                 if has_bc
-                # if inflow | outflow | topflow
-                    λf_arr[i,k] = 0.0
+                    # λf_arr[i,k] = 0.0
+                    λM = wspd_arr[iM,2,k]
+                    λP = zhang_wavespd(rhoP,rhouP,rhovP,EP,
+                                       sigmax_2_P,sigmax_3_P,sigmax_4_P,
+                                       sigmay_2_P,sigmay_3_P,sigmay_4_P,
+                                       0,1)
+                    λf = max(λM,λP)*BsJ_ii_halved_abs
+                    λf_arr[i,k] = λf
+                    if in_s1
+                        dii_arr[iM,k] = dii_arr[iM,k] + λf
+                    end
+
                 else
                     λM = wspd_arr[iM,2,k]
                     λP = wspd_arr[iP,2,kP]
@@ -1361,15 +1383,15 @@ sy = syJ./J
     fill!(dii_arr,0.0)
     # dt = min(dt0,T-t)
     dt = dt0
-    enforce_BC_timestep!(U,wall_nodal);
+    # enforce_BC_timestep!(U,wall_nodal);
     dt = rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,true);
     dt = min(CFL*dt,T-t)
     @. resW = U + dt*rhsU
-    enforce_BC_timestep!(resW,wall_nodal);
+    # enforce_BC_timestep!(resW,wall_nodal);
     rhs_IDP!(resW,rhsU,t+dt,dt,prealloc,ops,geom,false);
     @. resW = resW+dt*rhsU
     @. resW = 3/4*U+1/4*resW
-    enforce_BC_timestep!(resW,wall_nodal);
+    # enforce_BC_timestep!(resW,wall_nodal);
     rhs_IDP!(resW,rhsU,t+dt/2,dt,prealloc,ops,geom,false);
     @. resW = resW+dt*rhsU
     @. U = 1/3*U+2/3*resW
@@ -1413,18 +1435,6 @@ sy = syJ./J
         # end
         # open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,sigmay,shocktube.txt","w") do io
         #     writedlm(io,sigma_y)
-        # end
-
-        # # TODO: 
-        # for k = 1:K 
-        #     for i = 1:Np
-        #         if x[i,k] > 3.3
-        #             U[1,i,k] = rhoR
-        #             U[2,i,k] = rhouR
-        #             U[3,i,k] = rhovR
-        #             U[4,i,k] = ER
-        #         end
-        #     end
         # end
     end
 end
