@@ -347,7 +347,7 @@ function rhs_IDP(U,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,in_s1)
         for i = 1:N+1
             for j = 1:N+1
                 if i != j
-                    wavespd = max(beta_arr[i,k],beta_arr[j,k])
+                    wavespd = max(beta_arr[i,k],beta_arr[j,k],wavespd_arr[i,k],wavespd_arr[j,k])
                     fluxS = flux_ES(Ub[1][i,k],Ub[2][i,k],Ub[3][i,k],Ub[1][j,k],Ub[2][j,k],Ub[3][j,k],S[i,j])
                     for c = 1:3
                         F_low[c][i,j]  = -flux_viscous(sigma[c][i,k],sigma[c][j,k],S0[i,j])+flux_lowIDP(U[c][i,k],U[c][j,k],flux[c][i,k],flux[c][j,k],S0[i,j],wavespd)
@@ -599,7 +599,7 @@ function rhs_IDPlow(U,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,in_s1)
     return rhsU,dt
 end
 
-Karr = [50;100;200;400;800;1600]
+Karr = [200;400]
 for K in Karr
 
 "Approximation parameters"
@@ -732,45 +732,33 @@ end
 
 exact_U = @. exact_sol_viscous_shocktube.(x,T)
 exact_rho = [x[1] for x in exact_U]
-exact_u = [x[2] for x in exact_U]
-exact_u = exact_u./exact_rho
-exact_rhou = exact_u.*exact_rho
+exact_rhou = [x[2] for x in exact_U]
+exact_u = exact_rhou./exact_rho
 exact_E = [x[3] for x in exact_U]
 
 rho = U[1]
 u = U[2]./U[1]
+p = pfun_nd.(U[1],U[2],U[3])
 rhou = U[2]
 E = U[3]
-p = pfun_nd.(U[1],U[2],U[3])
 J = (Br-Bl)/K/2
-
-# Linferr = maximum(abs.(exact_rho-rho))/maximum(abs.(exact_rho)) +
-#           maximum(abs.(exact_u-u))/maximum(abs.(exact_u)) +
-#           maximum(abs.(exact_E-E))/maximum(abs.(exact_E))
-
-# L1err = sum(J*wq.*abs.(exact_rho-rho))/sum(J*wq.*abs.(rho)) +
-#         sum(J*wq.*abs.(exact_u-u))/sum(J*wq.*abs.(u)) +
-#         sum(J*wq.*abs.(exact_E-E))/sum(J*wq.*abs.(E))
-
-# L2err = sqrt(sum(J*wq.*abs.(exact_rho-rho).^2))/sqrt(sum(J*wq.*abs.(rho).^2)) +
-#         sqrt(sum(J*wq.*abs.(exact_u-u).^2))/sqrt(sum(J*wq.*abs.(u).^2)) +
-#         sqrt(sum(J*wq.*abs.(exact_E-E).^2))/sqrt(sum(J*wq.*abs.(E).^2))
 
 Linferr = maximum(abs.(exact_rho-rho))/maximum(abs.(exact_rho)) +
           maximum(abs.(exact_rhou-rhou))/maximum(abs.(exact_rhou)) +
           maximum(abs.(exact_E-E))/maximum(abs.(exact_E))
 
-L1err = sum(J*wq.*abs.(exact_rho-rho))/sum(J*wq.*abs.(rho)) +
-        sum(J*wq.*abs.(exact_rhou-rhou))/sum(J*wq.*abs.(rhou)) +
-        sum(J*wq.*abs.(exact_E-E))/sum(J*wq.*abs.(E))
+L1err = sum(J*wq.*abs.(exact_rho-rho))/sum(J*wq.*abs.(exact_rho)) +
+        sum(J*wq.*abs.(exact_rhou-rhou))/sum(J*wq.*abs.(exact_rhou)) +
+        sum(J*wq.*abs.(exact_E-E))/sum(J*wq.*abs.(exact_E))
 
-L2err = sqrt(sum(J*wq.*abs.(exact_rho-rho).^2))/sqrt(sum(J*wq.*abs.(rho).^2)) +
-        sqrt(sum(J*wq.*abs.(exact_rhou-rhou).^2))/sqrt(sum(J*wq.*abs.(rhou).^2)) +
-        sqrt(sum(J*wq.*abs.(exact_E-E).^2))/sqrt(sum(J*wq.*abs.(E).^2))
+L2err = sqrt(sum(J*wq.*abs.(exact_rho-rho).^2))/sqrt(sum(J*wq.*abs.(exact_rho).^2)) +
+        sqrt(sum(J*wq.*abs.(exact_rhou-rhou).^2))/sqrt(sum(J*wq.*abs.(exact_rhou).^2)) +
+        sqrt(sum(J*wq.*abs.(exact_E-E).^2))/sqrt(sum(J*wq.*abs.(exact_E).^2))
 
 println("N = $N, K = $K")
 println("L1 error is $L1err")
 println("L2 error is $L2err")
+println("Linf error is $Linferr")
 
 end # for k in Karr
 # println("Linf error is $Linferr")

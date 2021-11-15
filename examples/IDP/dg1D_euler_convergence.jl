@@ -504,7 +504,7 @@ end
 exact_sol = exact_sol_Leblanc
 
 Narr = [2]
-Karr = [50;100;200;400;800;1600]
+Karr = [200;400]
 
 # Start N, K loop
 for N in Narr
@@ -659,39 +659,44 @@ end
 #end every GIFINTERVAL
 #end
 
-plot(Vp*x,Vp*U[1])
 
 
 
 
-
-
+@inline function Efun(rho,u,p)
+    return p/(γ-1) + .5*rho*(u^2)
+end
 
 exact_U = @. exact_sol(x,T)
 exact_rho = [x[1] for x in exact_U]
 exact_u = [x[2] for x in exact_U]
 exact_p = [x[3] for x in exact_U]
+exact_rhou = exact_rho .* exact_u
+exact_E = Efun.(exact_rho,exact_u,exact_p)
 
 rho = U[1]
 u = U[2]./U[1]
 p = pfun_nd.(U[1],U[2],U[3])
+rhou = U[2]
+E = U[3]
 J = (Br-Bl)/K/2
 
-Linferr = maximum(abs.(exact_rho-rho))/maximum(abs.(rho)) +
-          maximum(abs.(exact_u-u))/maximum(abs.(u)) +
-          maximum(abs.(exact_p-p))/maximum(abs.(p))
+Linferr = maximum(abs.(exact_rho-rho))/maximum(abs.(exact_rho)) +
+          maximum(abs.(exact_rhou-rhou))/maximum(abs.(exact_rhou)) +
+          maximum(abs.(exact_E-E))/maximum(abs.(exact_E))
 
-L1err = sum(J*wq.*abs.(exact_rho-rho))/sum(J*wq.*abs.(rho)) +
-        sum(J*wq.*abs.(exact_u-u))/sum(J*wq.*abs.(u)) +
-        sum(J*wq.*abs.(exact_p-p))/sum(J*wq.*abs.(p))
+L1err = sum(J*wq.*abs.(exact_rho-rho))/sum(J*wq.*abs.(exact_rho)) +
+        sum(J*wq.*abs.(exact_rhou-rhou))/sum(J*wq.*abs.(exact_rhou)) +
+        sum(J*wq.*abs.(exact_E-E))/sum(J*wq.*abs.(exact_E))
 
-L2err = sqrt(sum(J*wq.*abs.(exact_rho-rho).^2))/sqrt(sum(J*wq.*abs.(rho).^2)) +
-        sqrt(sum(J*wq.*abs.(exact_u-u).^2))/sqrt(sum(J*wq.*abs.(u).^2)) +
-        sqrt(sum(J*wq.*abs.(exact_p-p).^2))/sqrt(sum(J*wq.*abs.(p).^2))
+L2err = sqrt(sum(J*wq.*abs.(exact_rho-rho).^2))/sqrt(sum(J*wq.*abs.(exact_rho).^2)) +
+        sqrt(sum(J*wq.*abs.(exact_rhou-rhou).^2))/sqrt(sum(J*wq.*abs.(exact_rhou).^2)) +
+        sqrt(sum(J*wq.*abs.(exact_E-E).^2))/sqrt(sum(J*wq.*abs.(exact_E).^2))
 
 println("N = $N, K = $K")
 println("L1 error is $L1err")
 println("L2 error is $L2err")
+println("Linf error is $Linferr")
 
 end
 end # End N, K loop
