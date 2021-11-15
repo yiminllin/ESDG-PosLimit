@@ -6,7 +6,6 @@ using SparseArrays
 using BenchmarkTools
 using UnPack
 
-
 push!(LOAD_PATH, "./src")
 using CommonUtils
 using Basis1D
@@ -300,7 +299,7 @@ function rhs_IDP(U,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,in_s1)
         for i = 1:N+1
             for j = 1:N+1
                 if i != j 
-                    d_ij = abs(S0[i,j])*max(beta_arr[i,k],beta_arr[j,k])
+                    d_ij = abs(S0[i,j])*max(beta_arr[i,k],beta_arr[j,k],wavespd_arr[i,k],wavespd_arr[j,k])
                     if in_s1
                         d_ii_arr[i,k] = d_ii_arr[i,k] + d_ij
                     end
@@ -323,8 +322,10 @@ function rhs_IDP(U,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,in_s1)
         TR = pR/rhoR/(γ-1)/cv
         sigma_left  = (k == 1) ? [sigma[1][1,1];sigma[2][1,1];sigma[3][1,1]]       : [sigma[1][end,k-1]; sigma[2][end,k-1]; sigma[3][end,k-1]]
         sigma_right = (k == K) ? [sigma[1][end,k];sigma[2][end,k];sigma[3][end,k]] : [sigma[1][1,k+1]; sigma[2][1,k+1]; sigma[3][1,k+1]]
-        wavespd_l = max(beta_arr[1,k],zhang_wavespd(U_left[1],U_left[2],U_left[3],sigma_left[2],sigma_left[3],p_left))
-        wavespd_r = max(beta_arr[end,k],zhang_wavespd(U_right[1],U_right[2],U_right[3],sigma_right[2],sigma_right[3],p_right))
+        wavespd_l = max(beta_arr[1,k],zhang_wavespd(U_left[1],U_left[2],U_left[3],sigma_left[2],sigma_left[3],p_left),
+                        wavespd_arr[1,k],wavespeed_1D(U_left[1],U_left[2],U_left[3]))
+        wavespd_r = max(beta_arr[end,k],zhang_wavespd(U_right[1],U_right[2],U_right[3],sigma_right[2],sigma_right[3],p_right),
+                        wavespd_arr[end,k],wavespeed_1D(U_right[1],U_right[2],U_right[3]))
 
         if in_s1
             d_ii_arr[1,k] = d_ii_arr[1,k] + 0.5*wavespd_l 
@@ -371,9 +372,12 @@ function rhs_IDP(U,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,in_s1)
         TR = pR/rhoR/(γ-1)/cv
         sigma_left  = (k == 1) ? [sigma[1][1,1];sigma[2][1,1];sigma[3][1,1]]       : [sigma[1][end,k-1]; sigma[2][end,k-1]; sigma[3][end,k-1]]
         sigma_right = (k == K) ? [sigma[1][end,k];sigma[2][end,k];sigma[3][end,k]] : [sigma[1][1,k+1]; sigma[2][1,k+1]; sigma[3][1,k+1]]
-        wavespd_l = max(beta_arr[1,k],zhang_wavespd(U_left[1],U_left[2],U_left[3],sigma_left[2],sigma_left[3],p_left))
-        wavespd_r = max(beta_arr[end,k],zhang_wavespd(U_right[1],U_right[2],U_right[3],sigma_right[2],sigma_right[3],p_right))
-
+        # wavespd_l = max(beta_arr[1,k],zhang_wavespd(U_left[1],U_left[2],U_left[3],sigma_left[2],sigma_left[3],p_left))
+        # wavespd_r = max(beta_arr[end,k],zhang_wavespd(U_right[1],U_right[2],U_right[3],sigma_right[2],sigma_right[3],p_right))
+        wavespd_l = max(beta_arr[1,k],zhang_wavespd(U_left[1],U_left[2],U_left[3],sigma_left[2],sigma_left[3],p_left),
+                        wavespd_arr[1,k],wavespeed_1D(U_left[1],U_left[2],U_left[3]))
+        wavespd_r = max(beta_arr[end,k],zhang_wavespd(U_right[1],U_right[2],U_right[3],sigma_right[2],sigma_right[3],p_right),
+                        wavespd_arr[end,k],wavespeed_1D(U_right[1],U_right[2],U_right[3]))
 
         for c = 1:3
             F_low_P[c][1] = -flux_viscous(sigma[c][1,k],sigma_left[c],-1/2)+flux_lowIDP(U[c][1,k],U_left[c],flux[c][1,k],f_left[c],-0.5,wavespd_l)
@@ -696,17 +700,17 @@ while t < T
 
     # SSPRK(3,3)
     dt = Inf
-    # rhsU,dt = rhs_IDP(U,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,true)
-    rhsU,dt = rhs_IDPlow(U,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,true)
+    rhsU,dt = rhs_IDP(U,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,true)
+    # rhsU,dt = rhs_IDPlow(U,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,true)
     dt = 0.5*dt
     dt = min(dt,T-t)
     @. resW = U + dt*rhsU
-    # rhsU,_ = rhs_IDP(resW,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,false)
-    rhsU,_ = rhs_IDPlow(resW,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,false)
+    rhsU,_ = rhs_IDP(resW,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,false)
+    # rhsU,_ = rhs_IDPlow(resW,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,false)
     @. resZ = resW+dt*rhsU
     @. resW = 3/4*U+1/4*resZ
-    # rhsU,_ = rhs_IDP(resW,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,false)
-    rhsU,_ = rhs_IDPlow(resW,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,false)
+    rhsU,_ = rhs_IDP(resW,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,false)
+    # rhsU,_ = rhs_IDPlow(resW,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,false)
     @. resZ = resW+dt*rhsU
     @. U = 1/3*U+2/3*resZ
 
@@ -730,24 +734,38 @@ exact_U = @. exact_sol_viscous_shocktube.(x,T)
 exact_rho = [x[1] for x in exact_U]
 exact_u = [x[2] for x in exact_U]
 exact_u = exact_u./exact_rho
+exact_rhou = exact_u.*exact_rho
 exact_E = [x[3] for x in exact_U]
 
 rho = U[1]
 u = U[2]./U[1]
+rhou = U[2]
 E = U[3]
 p = pfun_nd.(U[1],U[2],U[3])
 J = (Br-Bl)/K/2
 
+# Linferr = maximum(abs.(exact_rho-rho))/maximum(abs.(exact_rho)) +
+#           maximum(abs.(exact_u-u))/maximum(abs.(exact_u)) +
+#           maximum(abs.(exact_E-E))/maximum(abs.(exact_E))
+
+# L1err = sum(J*wq.*abs.(exact_rho-rho))/sum(J*wq.*abs.(rho)) +
+#         sum(J*wq.*abs.(exact_u-u))/sum(J*wq.*abs.(u)) +
+#         sum(J*wq.*abs.(exact_E-E))/sum(J*wq.*abs.(E))
+
+# L2err = sqrt(sum(J*wq.*abs.(exact_rho-rho).^2))/sqrt(sum(J*wq.*abs.(rho).^2)) +
+#         sqrt(sum(J*wq.*abs.(exact_u-u).^2))/sqrt(sum(J*wq.*abs.(u).^2)) +
+#         sqrt(sum(J*wq.*abs.(exact_E-E).^2))/sqrt(sum(J*wq.*abs.(E).^2))
+
 Linferr = maximum(abs.(exact_rho-rho))/maximum(abs.(exact_rho)) +
-          maximum(abs.(exact_u-u))/maximum(abs.(exact_u)) +
+          maximum(abs.(exact_rhou-rhou))/maximum(abs.(exact_rhou)) +
           maximum(abs.(exact_E-E))/maximum(abs.(exact_E))
 
 L1err = sum(J*wq.*abs.(exact_rho-rho))/sum(J*wq.*abs.(rho)) +
-        sum(J*wq.*abs.(exact_u-u))/sum(J*wq.*abs.(u)) +
+        sum(J*wq.*abs.(exact_rhou-rhou))/sum(J*wq.*abs.(rhou)) +
         sum(J*wq.*abs.(exact_E-E))/sum(J*wq.*abs.(E))
 
 L2err = sqrt(sum(J*wq.*abs.(exact_rho-rho).^2))/sqrt(sum(J*wq.*abs.(rho).^2)) +
-        sqrt(sum(J*wq.*abs.(exact_u-u).^2))/sqrt(sum(J*wq.*abs.(u).^2)) +
+        sqrt(sum(J*wq.*abs.(exact_rhou-rhou).^2))/sqrt(sum(J*wq.*abs.(rhou).^2)) +
         sqrt(sum(J*wq.*abs.(exact_E-E).^2))/sqrt(sum(J*wq.*abs.(E).^2))
 
 println("N = $N, K = $K")

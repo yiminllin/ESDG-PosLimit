@@ -182,6 +182,11 @@ end
         l = max((-rhoL+POSTOL)/rhoP, 0.0)
     end
 
+    p = pfun(rhoL+l*rhoP,rhouL+l*rhouP,rhovL+l*rhovP,EL+l*EP)
+    if p > TOL
+        return l
+    end
+
     # limiting internal energy (via quadratic function)
     a = rhoP*EP-(rhouP^2+rhovP^2)/2.0
     b = rhoP*EL+rhoL*EP-rhouL*rhouP-rhovL*rhovP
@@ -293,7 +298,7 @@ const POSTOL = 1e-14
 const WALLPT = 1.0/6.0
 const Nc = 4 # number of components
 "Approximation parameters"
-const N = 3
+const N = 2
 const K1D = 250#300#250
 const T = 1.0#0.2
 # const dt0 = 1e-5
@@ -805,14 +810,16 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
             sigma2_2 = sigma_y[2,i,k]
             sigma2_3 = sigma_y[3,i,k]
             sigma2_4 = sigma_y[4,i,k]
-            wspd_arr[i,1,k] = zhang_wavespd(rho_i,rhou_i,rhov_i,E_i,
-                                            sigma1_2,sigma1_3,sigma1_4,
-                                            sigma2_2,sigma2_3,sigma2_4,
-                                            1,0)
-            wspd_arr[i,2,k] = zhang_wavespd(rho_i,rhou_i,rhov_i,E_i,
-                                            sigma1_2,sigma1_3,sigma1_4,
-                                            sigma2_2,sigma2_3,sigma2_4,
-                                            0,1)
+            wspd_arr[i,1,k] = max(zhang_wavespd(rho_i,rhou_i,rhov_i,E_i,
+                                                sigma1_2,sigma1_3,sigma1_4,
+                                                sigma2_2,sigma2_3,sigma2_4,
+                                                1,0),
+                                  wavespeed_1D(rho_i,rhou_i,E_i))
+            wspd_arr[i,2,k] = max(zhang_wavespd(rho_i,rhou_i,rhov_i,E_i,
+                                                sigma1_2,sigma1_3,sigma1_4,
+                                                sigma2_2,sigma2_3,sigma2_4,
+                                                0,1),
+                                  wavespeed_1D(rho_i,rhov_i,E_i))
         end
 
         # Interior dissipation coeff
@@ -859,17 +866,18 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
             
             if is_face_x(i)
                 if has_bc
-                    # λf_arr[i,k] = 0.0
-                    λM = wspd_arr[iM,1,k]
-                    λP = zhang_wavespd(rhoP,rhouP,rhovP,EP,
-                                       sigmax_2_P,sigmax_3_P,sigmax_4_P,
-                                       sigmay_2_P,sigmay_3_P,sigmay_4_P,
-                                       1,0)
-                    λf = max(λM,λP)*BrJ_ii_halved_abs
-                    λf_arr[i,k] = λf
-                    if in_s1
-                        dii_arr[iM,k] = dii_arr[iM,k] + λf
-                    end
+                    λf_arr[i,k] = 0.0
+                    # λM = wspd_arr[iM,1,k]
+                    # λP = max(zhang_wavespd(rhoP,rhouP,rhovP,EP,
+                    #                    sigmax_2_P,sigmax_3_P,sigmax_4_P,
+                    #                    sigmay_2_P,sigmay_3_P,sigmay_4_P,
+                    #                    1,0),
+                    #          wavespeed_1D(rhoP,rhouP,EP))
+                    # λf = max(λM,λP)*BrJ_ii_halved_abs
+                    # λf_arr[i,k] = λf
+                    # if in_s1
+                    #     dii_arr[iM,k] = dii_arr[iM,k] + λf
+                    # end
                 else
                     λM = wspd_arr[iM,1,k]
                     λP = wspd_arr[iP,1,kP]
@@ -883,17 +891,18 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
 
             if is_face_y(i)
                 if has_bc
-                    # λf_arr[i,k] = 0.0
-                    λM = wspd_arr[iM,2,k]
-                    λP = zhang_wavespd(rhoP,rhouP,rhovP,EP,
-                                       sigmax_2_P,sigmax_3_P,sigmax_4_P,
-                                       sigmay_2_P,sigmay_3_P,sigmay_4_P,
-                                       0,1)
-                    λf = max(λM,λP)*BsJ_ii_halved_abs
-                    λf_arr[i,k] = λf
-                    if in_s1
-                        dii_arr[iM,k] = dii_arr[iM,k] + λf
-                    end
+                    λf_arr[i,k] = 0.0
+                    # λM = wspd_arr[iM,2,k]
+                    # λP = max(zhang_wavespd(rhoP,rhouP,rhovP,EP,
+                    #                    sigmax_2_P,sigmax_3_P,sigmax_4_P,
+                    #                    sigmay_2_P,sigmay_3_P,sigmay_4_P,
+                    #                    0,1),
+                    #          wavespeed_1D(rhoP,rhovP,EP))
+                    # λf = max(λM,λP)*BsJ_ii_halved_abs
+                    # λf_arr[i,k] = λf
+                    # if in_s1
+                    #     dii_arr[iM,k] = dii_arr[iM,k] + λf
+                    # end
 
                 else
                     λM = wspd_arr[iM,2,k]
@@ -997,21 +1006,37 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
             sigmay_2_M = sigma_y[2,iM,k]
             sigmay_3_M = sigma_y[3,iM,k]
             sigmay_4_M = sigma_y[4,iM,k]
+            v1M   = VU[1,iM,k]
+            v2M   = VU[2,iM,k]
+            v3M   = VU[3,iM,k]
+            v4M   = VU[4,iM,k]
+            topwall,leftwall,rightwall,bottomwall,has_bc = check_BC(xM,yM,i)
+            v1P,v2P,v3P,v4P = get_vP(VU,mapP,Fmask,i,iM,k,xM,t,topwall,leftwall,rightwall,bottomwall,has_bc)
 
             rhoP,rhouP,rhovP,EP,fx_1_P,fx_2_P,fx_3_P,fx_4_P,fy_1_P,fy_2_P,fy_3_P,fy_4_P,
             sigmax_1_P,sigmax_2_P,sigmax_3_P,sigmax_4_P,sigmay_1_P,sigmay_2_P,sigmay_3_P,sigmay_4_P,has_bc = get_valP(U,f_x,f_y,sigma_x,sigma_y,t,mapP,Fmask,i,iM,xM,yM,uM,vM,k)
             λ = λf_arr[i,k]
+            
+            alpha = -1/Re/v4M
+            visc_pen_2 = alpha*(v2P-v2M)
+            visc_pen_3 = alpha*(v3P-v3M)
+            visc_pen_4 = alpha*(v4P-v4M)
+            if has_bc
+                visc_pen_2 = -alpha*(v2P-v2M)
+                visc_pen_3 = -alpha*(v3P-v3M)
+                visc_pen_4 = alpha*((v2P+v2M)*(v2P-v2M) + (v3P+v3M)*(v3P-v3M) + (v4P-v4M)*(v4P-v4M))/2/v4M
+            end
 
             # flux in x direction
             if is_face_x(i)
                 F_P[1,i,tid] = (BrJ_ii_halved*(fx_1_M+fx_1_P-sigmax_1_M-sigmax_1_P)
                                -λ*(rhoP-rhoM) )
                 F_P[2,i,tid] = (BrJ_ii_halved*(fx_2_M+fx_2_P-sigmax_2_M-sigmax_2_P)
-                               -λ*(rhouP-rhouM) )
+                               -λ*(rhouP-rhouM) + abs(BrJ_ii_halved)*visc_pen_2)
                 F_P[3,i,tid] = (BrJ_ii_halved*(fx_3_M+fx_3_P-sigmax_3_M-sigmax_3_P)
-                               -λ*(rhovP-rhovM) )
+                               -λ*(rhovP-rhovM) + abs(BrJ_ii_halved)*visc_pen_3)
                 F_P[4,i,tid] = (BrJ_ii_halved*(fx_4_M+fx_4_P-sigmax_4_M-sigmax_4_P)
-                               -λ*(EP-EM) )
+                               -λ*(EP-EM) + abs(BrJ_ii_halved)*visc_pen_4)
             end
 
             # flux in y direction
@@ -1019,11 +1044,11 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
                 F_P[1,i,tid] = (BsJ_ii_halved*(fy_1_M+fy_1_P-sigmay_1_M-sigmay_1_P)
                                -λ*(rhoP-rhoM) )
                 F_P[2,i,tid] = (BsJ_ii_halved*(fy_2_M+fy_2_P-sigmay_2_M-sigmay_2_P)
-                               -λ*(rhouP-rhouM) )
+                               -λ*(rhouP-rhouM) + abs(BsJ_ii_halved)*visc_pen_2)
                 F_P[3,i,tid] = (BsJ_ii_halved*(fy_3_M+fy_3_P-sigmay_3_M-sigmay_3_P)
-                               -λ*(rhovP-rhovM) )
+                               -λ*(rhovP-rhovM) + abs(BsJ_ii_halved)*visc_pen_3)
                 F_P[4,i,tid] = (BsJ_ii_halved*(fy_4_M+fy_4_P-sigmay_4_M-sigmay_4_P)
-                               -λ*(EP-EM) )
+                               -λ*(EP-EM) + abs(BsJ_ii_halved)*visc_pen_4)
             end
         end
 
@@ -1383,15 +1408,15 @@ sy = syJ./J
     fill!(dii_arr,0.0)
     # dt = min(dt0,T-t)
     dt = dt0
-    # enforce_BC_timestep!(U,wall_nodal);
+    enforce_BC_timestep!(U,wall_nodal);
     dt = rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,true);
     dt = min(CFL*dt,T-t)
     @. resW = U + dt*rhsU
-    # enforce_BC_timestep!(resW,wall_nodal);
+    enforce_BC_timestep!(resW,wall_nodal);
     rhs_IDP!(resW,rhsU,t+dt,dt,prealloc,ops,geom,false);
     @. resW = resW+dt*rhsU
     @. resW = 3/4*U+1/4*resW
-    # enforce_BC_timestep!(resW,wall_nodal);
+    enforce_BC_timestep!(resW,wall_nodal);
     rhs_IDP!(resW,rhsU,t+dt/2,dt,prealloc,ops,geom,false);
     @. resW = resW+dt*rhsU
     @. U = 1/3*U+2/3*resW

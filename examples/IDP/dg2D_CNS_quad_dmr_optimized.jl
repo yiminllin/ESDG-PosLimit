@@ -182,6 +182,11 @@ end
         l = max((-rhoL+POSTOL)/rhoP, 0.0)
     end
 
+    p = pfun(rhoL+l*rhoP,rhouL+l*rhouP,rhovL+l*rhovP,EL+l*EP)
+    if p > TOL
+        return l
+    end
+
     # limiting internal energy (via quadratic function)
     a = rhoP*EP-(rhouP^2+rhovP^2)/2.0
     b = rhoP*EL+rhoL*EP-rhouL*rhouP-rhovL*rhovP
@@ -924,14 +929,16 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
             sigma2_2 = sigma_y[2,i,k]
             sigma2_3 = sigma_y[3,i,k]
             sigma2_4 = sigma_y[4,i,k]
-            wspd_arr[i,1,k] = zhang_wavespd(rho_i,rhou_i,rhov_i,E_i,
+            wspd_arr[i,1,k] = max(zhang_wavespd(rho_i,rhou_i,rhov_i,E_i,
                                             sigma1_2,sigma1_3,sigma1_4,
                                             sigma2_2,sigma2_3,sigma2_4,
-                                            1,0)
-            wspd_arr[i,2,k] = zhang_wavespd(rho_i,rhou_i,rhov_i,E_i,
+                                            1,0),
+                                  wavespeed_1D(rho_i,rhou_i,E_i))
+            wspd_arr[i,2,k] = max(zhang_wavespd(rho_i,rhou_i,rhov_i,E_i,
                                             sigma1_2,sigma1_3,sigma1_4,
                                             sigma2_2,sigma2_3,sigma2_4,
-                                            0,1)
+                                            0,1),
+                                  wavespeed_1D(rho_i,rhov_i,E_i))
         end
 
         # Interior dissipation coeff

@@ -161,6 +161,11 @@ end
         l = max((-rhoL+POSTOL)/rhoP, 0.0)
     end
 
+    p = pfun(rhoL+l*rhoP,rhouL+l*rhouP,rhovL+l*rhovP,EL+l*EP)
+    if p > TOL
+        return l
+    end
+
     # limiting internal energy (via quadratic function)
     a = rhoP*EP-(rhouP^2+rhovP^2)/2.0
     b = rhoP*EL+rhoL*EP-rhouL*rhouP-rhovL*rhovP

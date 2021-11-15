@@ -76,6 +76,7 @@ rxJ, sxJ, ryJ, syJ = (x->Vh*x).((rxJ, sxJ, ryJ, syJ)) # interp to hybridized poi
 @unpack LIFT = rd
 ops = (Qrhskew,Qshskew,VhP,Ph,LIFT,Vq)
 
+#=
 "Time integration"
 rk4a,rk4b,rk4c = rk45_coeffs()
 CN = (N+1)*(N+2)/2  # estimated trace constant for CFL
@@ -237,3 +238,4 @@ gr(aspect_ratio=:equal,legend=false,
 
 vv = Vp*Q[1]
 scatter(Vp*x,Vp*y,vv,zcolor=vv,camera=(0,90))
+=#
