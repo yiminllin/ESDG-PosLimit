@@ -161,6 +161,11 @@ end
         l = max((-rhoL+POSTOL)/rhoP, 0.0)
     end
 
+    p = pfun(rhoL+l*rhoP,rhouL+l*rhouP,rhovL+l*rhovP,EL+l*EP)
+    if p > TOL
+        return l
+    end
+
     # limiting internal energy (via quadratic function)
     a = rhoP*EP-(rhouP^2+rhovP^2)/2.0
     b = rhoP*EL+rhoL*EP-rhouL*rhouP-rhovL*rhovP
@@ -195,7 +200,7 @@ const WALLPT = 1.0/6.0
 const Nc = 4 # number of components
 "Approximation parameters"
 const N = 2
-const K1D = 160
+const K1D = 20
 const T = 1.0
 const dt0 = 1e-1
 const XLENGTH = 2.0
@@ -821,9 +826,9 @@ const TOP_INIT = (1+sqrt(3)/6)/sqrt(3)
 # at_left(x,y) = y-sqrt(3)*x+sqrt(3)/6 > 0.0
 function vortex_sol(x,y,t)
 
-    x0 = 5.5
+    x0 = 4.5
     y0 = 2.5
-    beta = 8
+    beta = 8.5
     r2 = @. (x-x0-t)^2 + (y-y0)^2
 
     u = @. 1 - beta*exp(1-r2)*(y-y0)/(2*pi)
@@ -971,31 +976,36 @@ exact_rho = [x[1] for x in exact_U]
 exact_u = [x[2] for x in exact_U]
 exact_v = [x[3] for x in exact_U]
 exact_p = [x[4] for x in exact_U]
+exact_rhou = exact_rho .* exact_u
+exact_rhov = exact_rho .* exact_v
 exact_E = Efun.(exact_rho,exact_u,exact_v,exact_p)
 
 rho = U[1,:,:]
+rhou = U[2,:,:]
+rhov = U[3,:,:]
 u = U[2,:,:]./U[1,:,:]
 v = U[3,:,:]./U[1,:,:]
 E = U[4,:,:]
 
 Linferr = maximum(abs.(exact_rho-rho))/maximum(abs.(exact_rho)) +
-          maximum(abs.(exact_u-u))/maximum(abs.(exact_u)) +
-          maximum(abs.(exact_v-v))/maximum(abs.(exact_v)) +
+          maximum(abs.(exact_rhou-rhou))/maximum(abs.(exact_rhou)) +
+          maximum(abs.(exact_rhov-rhov))/maximum(abs.(exact_rhov)) +
           maximum(abs.(exact_E-E))/maximum(abs.(exact_E))
 
-L1err = sum(J*M.*abs.(exact_rho-rho))/sum(J*M.*abs.(rho)) +
-        sum(J*M.*abs.(exact_u-u))/sum(J*M.*abs.(u)) +
-        sum(J*M.*abs.(exact_v-v))/sum(J*M.*abs.(v)) +
-        sum(J*M.*abs.(exact_E-E))/sum(J*M.*abs.(E))
+L1err = sum(J*M.*abs.(exact_rho-rho))/sum(J*M.*abs.(exact_rho)) +
+        sum(J*M.*abs.(exact_rhou-rhou))/sum(J*M.*abs.(exact_rhou)) +
+        sum(J*M.*abs.(exact_rhov-rhov))/sum(J*M.*abs.(exact_rhov)) +
+        sum(J*M.*abs.(exact_E-E))/sum(J*M.*abs.(exact_E))
 
-L2err = sqrt(sum(J*M.*abs.(exact_rho-rho).^2))/sqrt(sum(J*M.*abs.(rho).^2)) +
-        sqrt(sum(J*M.*abs.(exact_u-u).^2))/sqrt(sum(J*M.*abs.(u).^2)) +
-        sqrt(sum(J*M.*abs.(exact_v-v).^2))/sqrt(sum(J*M.*abs.(v).^2)) +
-        sqrt(sum(J*M.*abs.(exact_E-E).^2))/sqrt(sum(J*M.*abs.(E).^2))
+L2err = sqrt(sum(J*M.*abs.(exact_rho-rho).^2))/sqrt(sum(J*M.*abs.(exact_rho).^2)) +
+        sqrt(sum(J*M.*abs.(exact_rhou-rhou).^2))/sqrt(sum(J*M.*abs.(exact_rhou).^2)) +
+        sqrt(sum(J*M.*abs.(exact_rhov-rhov).^2))/sqrt(sum(J*M.*abs.(exact_rhov).^2)) +
+        sqrt(sum(J*M.*abs.(exact_E-E).^2))/sqrt(sum(J*M.*abs.(exact_E).^2))
 
 println("N = $N, K = $K")
 println("L1 error is $L1err")
 println("L2 error is $L2err")
+println("Linf error is $Linferr")
 
 
 
