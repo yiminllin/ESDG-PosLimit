@@ -26,6 +26,8 @@ include("SBP_quad_data.jl")
 using EntropyStableEuler
 using EntropyStableEuler.Fluxes2D
 
+@muladd begin
+
 function init_reference_tri_sbp_GQ(N, qnode_choice)
     include("SBP_quad_data.jl")
     # initialize a new reference element data struct
@@ -1224,6 +1226,4 @@ rhou = U[2,:,:]
 rhov = U[3,:,:]
 # E = U[4,:,:]
 
-vv = Vp*U[1,:,:]
-scatter(Vp*xq,Vp*yq,vv,zcolor=vv,camera=(0,90))
-savefig("~/Desktop/tmptri.png")
+end
