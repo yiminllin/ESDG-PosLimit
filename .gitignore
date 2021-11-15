@@ -14,3 +14,5 @@ demo*.jl
 *.png
 *.txt
 *.out
+*.vts
+*.pvd
