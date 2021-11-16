@@ -170,8 +170,8 @@ const WALLPT = 1.0/6.0
 const Nc = 4 # number of components
 "Approximation parameters"
 const N = 2
-const K1D = 10
-const T = 0.5
+const K1D = 80
+const T = 1.0
 const dt0 = 1e-2
 const XLENGTH = 2.0
 const CFL = 0.9
@@ -1207,23 +1207,76 @@ i = 1
     println("Current time $t with time step size $dt, and final time $T, at step $i")
     flush(stdout)
     global i = i + 1
+    if (mod(i,100) == 1)
+        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rho,convtri.txt","w") do io
+            writedlm(io,U[1,:,:])
+        end
+        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhou,convtri.txt","w") do io
+            writedlm(io,U[2,:,:])
+        end
+        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhov,convtri.txt","w") do io
+            writedlm(io,U[3,:,:])
+        end
+        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,E,convtri.txt","w") do io
+            writedlm(io,U[4,:,:])
+        end
+
+    end
+end
+
+open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rho,convtri.txt","w") do io
+    writedlm(io,U[1,:,:])
+end
+open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhou,convtri.txt","w") do io
+    writedlm(io,U[2,:,:])
+end
+open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhov,convtri.txt","w") do io
+    writedlm(io,U[3,:,:])
+end
+open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,E,convtri.txt","w") do io
+    writedlm(io,U[4,:,:])
 end
 
 
-exact_U = @. vortex_sol.(x,y,T)
+exact_U = @. vortex_sol.(xq,yq,T)
 exact_rho = [x[1] for x in exact_U]
 exact_u = [x[2] for x in exact_U]
 exact_v = [x[3] for x in exact_U]
+exact_p = [x[4] for x in exact_U]
 exact_rhou = exact_rho .* exact_u
 exact_rhov = exact_rho .* exact_v
-exact_p = [x[4] for x in exact_U]
 exact_E = Efun.(exact_rho,exact_u,exact_v,exact_p)
 
 rho = U[1,:,:]
-u = U[2,:,:]./U[1,:,:]
-v = U[3,:,:]./U[1,:,:]
 rhou = U[2,:,:]
 rhov = U[3,:,:]
-# E = U[4,:,:]
+u = U[2,:,:]./U[1,:,:]
+v = U[3,:,:]./U[1,:,:]
+E = U[4,:,:]
+
+M = diag(M)
+J = J[1,1]
+
+Linferr = maximum(abs.(exact_rho-rho))/maximum(abs.(exact_rho)) +
+          maximum(abs.(exact_rhou-rhou))/maximum(abs.(exact_rhou)) +
+          maximum(abs.(exact_rhov-rhov))/maximum(abs.(exact_rhov)) +
+          maximum(abs.(exact_E-E))/maximum(abs.(exact_E))
+
+L1err = sum(J*M.*abs.(exact_rho-rho))/sum(J*M.*abs.(exact_rho)) +
+        sum(J*M.*abs.(exact_rhou-rhou))/sum(J*M.*abs.(exact_rhou)) +
+        sum(J*M.*abs.(exact_rhov-rhov))/sum(J*M.*abs.(exact_rhov)) +
+        sum(J*M.*abs.(exact_E-E))/sum(J*M.*abs.(exact_E))
+
+L2err = sqrt(sum(J*M.*abs.(exact_rho-rho).^2))/sqrt(sum(J*M.*abs.(exact_rho).^2)) +
+        sqrt(sum(J*M.*abs.(exact_rhou-rhou).^2))/sqrt(sum(J*M.*abs.(exact_rhou).^2)) +
+        sqrt(sum(J*M.*abs.(exact_rhov-rhov).^2))/sqrt(sum(J*M.*abs.(exact_rhov).^2)) +
+        sqrt(sum(J*M.*abs.(exact_E-E).^2))/sqrt(sum(J*M.*abs.(exact_E).^2))
+
+println("N = $N, K = $K")
+println("L1 error is $L1err")
+println("L2 error is $L2err")
+println("Linf error is $Linferr")
+
+
 
 end

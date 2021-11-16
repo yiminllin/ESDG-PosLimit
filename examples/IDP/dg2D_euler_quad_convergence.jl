@@ -941,32 +941,32 @@ end
     global i = i + 1
     # if ((mod(i,100) == 1) | (i >= 55))
     if (mod(i,100) == 1)
-        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rho,dmr.txt","w") do io
+        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rho,convquad.txt","w") do io
             writedlm(io,U[1,:,:])
         end
-        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhou,dmr.txt","w") do io
+        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhou,convquad.txt","w") do io
             writedlm(io,U[2,:,:])
         end
-        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhov,dmr.txt","w") do io
+        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhov,convquad.txt","w") do io
             writedlm(io,U[3,:,:])
         end
-        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,E,dmr.txt","w") do io
+        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,E,convquad.txt","w") do io
             writedlm(io,U[4,:,:])
         end
 
     end
 end
 
-open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rho,dmr.txt","w") do io
+open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rho,convquad.txt","w") do io
     writedlm(io,U[1,:,:])
 end
-open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhou,dmr.txt","w") do io
+open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhou,convquad.txt","w") do io
     writedlm(io,U[2,:,:])
 end
-open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhov,dmr.txt","w") do io
+open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhov,convquad.txt","w") do io
     writedlm(io,U[3,:,:])
 end
-open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,E,dmr.txt","w") do io
+open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,E,convquad.txt","w") do io
     writedlm(io,U[4,:,:])
 end
 
