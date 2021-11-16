@@ -293,13 +293,18 @@ end
            K22_22,K22_24,K22_33,K22_34,K22_44
 end
 
+const Re = 1000
+const HARDBC = false
+const VISCPEN = true
+const INVISCPEN = false#true
+
 const TOL = 5e-16
 const POSTOL = 1e-14
 const WALLPT = 1.0/6.0
 const Nc = 4 # number of components
 "Approximation parameters"
 const N = 2
-const K1D = 250#300#250
+const K1D = 400
 const T = 1.0#0.2
 # const dt0 = 1e-5
 const dt0 = 0.2
@@ -307,7 +312,6 @@ const XLENGTH = 7.0/2.0
 const CFL = 0.9
 
 # Viscous parameters
-const Re = 10000
 const mu = 1/Re
 const lambda = 2/3*mu
 const Pr = 0.73
@@ -345,10 +349,10 @@ const v1R,v2R,v3R,v4R = entropyvar(rhoR,rhouR,rhovR,ER)
 
 "Mesh related variables"
 VX, VY, EToV = uniform_quad_mesh(2*K1D,K1D)
-@. VX = ((VX+1)/2)^(.25)
-@. VY = ((VY+1)/2)^(2)/2
-# @. VX = ((VX+1)/2)
-# @. VY = ((VY+1)/2)/2
+# @. VX = ((VX+1)/2)^(.25)
+# @. VY = ((VY+1)/2)^(2)/2
+@. VX = ((VX+1)/2)
+@. VY = ((VY+1)/2)/2
 
 rd = init_reference_quad(N,gauss_lobatto_quad(0,0,N))
 "Initialize reference element"
@@ -410,6 +414,7 @@ S0r = droptol!(sparse(kron(M1D,S01D)),TOL)
 S0s = droptol!(sparse(kron(S01D,M1D)),TOL)
 Br = droptol!(sparse(Qr+Qr'),TOL)
 Bs = droptol!(sparse(Qs+Qs'),TOL)
+@unpack wf = rd
 
 @inline function get_infoP(mapP,Fmask,i,k)
     gP = mapP[i,k]           # exterior global face node number
@@ -651,7 +656,7 @@ end
 
 function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
     f_x,f_y,VU,sigma_x,sigma_y,rholog,betalog,U_low,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr = prealloc
-    S0r_vec,S0s_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,Sr_db_vec,Ss_db_vec,Sr_nnzi,Sr_nnzj,Ss_nnzi,Ss_nnzj,Sr_vec,Ss_vec,M_inv,Br_halved,Bs_halved,coeff_arr,S_nnzi,S_nnzj,S0xJ_vec,S0yJ_vec   ,SxJ_vec    ,SyJ_vec    ,SxJ_db_vec ,SyJ_db_vec ,BrJ_halved ,BsJ_halved = ops
+    S0r_vec,S0s_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,Sr_db_vec,Ss_db_vec,Sr_nnzi,Sr_nnzj,Ss_nnzi,Ss_nnzj,Sr_vec,Ss_vec,M_inv,Br_halved,Bs_halved,coeff_arr,S_nnzi,S_nnzj,S0xJ_vec,S0yJ_vec   ,SxJ_vec    ,SyJ_vec    ,SxJ_db_vec ,SyJ_db_vec ,BrJ_halved ,BsJ_halved,wf = ops
     mapP,Fmask,x,y,J,rxJ,syJ,sJ = geom
 
     fill!(rhsU,0.0)
@@ -866,18 +871,21 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
             
             if is_face_x(i)
                 if has_bc
-                    λf_arr[i,k] = 0.0
-                    # λM = wspd_arr[iM,1,k]
-                    # λP = max(zhang_wavespd(rhoP,rhouP,rhovP,EP,
-                    #                    sigmax_2_P,sigmax_3_P,sigmax_4_P,
-                    #                    sigmay_2_P,sigmay_3_P,sigmay_4_P,
-                    #                    1,0),
-                    #          wavespeed_1D(rhoP,rhouP,EP))
-                    # λf = max(λM,λP)*BrJ_ii_halved_abs
-                    # λf_arr[i,k] = λf
-                    # if in_s1
-                    #     dii_arr[iM,k] = dii_arr[iM,k] + λf
-                    # end
+                    if INVISCPEN
+                        λM = wspd_arr[iM,1,k]
+                        λP = max(zhang_wavespd(rhoP,rhouP,rhovP,EP,
+                                        sigmax_2_P,sigmax_3_P,sigmax_4_P,
+                                        sigmay_2_P,sigmay_3_P,sigmay_4_P,
+                                        1,0),
+                                wavespeed_1D(rhoP,rhouP,EP))
+                        λf = max(λM,λP)*BrJ_ii_halved_abs
+                        λf_arr[i,k] = λf
+                        if in_s1
+                            dii_arr[iM,k] = dii_arr[iM,k] + λf
+                        end
+                    else
+                        λf_arr[i,k] = 0.0
+                    end
                 else
                     λM = wspd_arr[iM,1,k]
                     λP = wspd_arr[iP,1,kP]
@@ -891,19 +899,21 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
 
             if is_face_y(i)
                 if has_bc
-                    λf_arr[i,k] = 0.0
-                    # λM = wspd_arr[iM,2,k]
-                    # λP = max(zhang_wavespd(rhoP,rhouP,rhovP,EP,
-                    #                    sigmax_2_P,sigmax_3_P,sigmax_4_P,
-                    #                    sigmay_2_P,sigmay_3_P,sigmay_4_P,
-                    #                    0,1),
-                    #          wavespeed_1D(rhoP,rhovP,EP))
-                    # λf = max(λM,λP)*BsJ_ii_halved_abs
-                    # λf_arr[i,k] = λf
-                    # if in_s1
-                    #     dii_arr[iM,k] = dii_arr[iM,k] + λf
-                    # end
-
+                    if INVISCPEN
+                        λM = wspd_arr[iM,2,k]
+                        λP = max(zhang_wavespd(rhoP,rhouP,rhovP,EP,
+                                        sigmax_2_P,sigmax_3_P,sigmax_4_P,
+                                        sigmay_2_P,sigmay_3_P,sigmay_4_P,
+                                        0,1),
+                                wavespeed_1D(rhoP,rhovP,EP))
+                        λf = max(λM,λP)*BsJ_ii_halved_abs
+                        λf_arr[i,k] = λf
+                        if in_s1
+                            dii_arr[iM,k] = dii_arr[iM,k] + λf
+                        end
+                    else
+                        λf_arr[i,k] = 0.0
+                    end
                 else
                     λM = wspd_arr[iM,2,k]
                     λP = wspd_arr[iP,2,kP]
@@ -1017,14 +1027,20 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
             sigmax_1_P,sigmax_2_P,sigmax_3_P,sigmax_4_P,sigmay_1_P,sigmay_2_P,sigmay_3_P,sigmay_4_P,has_bc = get_valP(U,f_x,f_y,sigma_x,sigma_y,t,mapP,Fmask,i,iM,xM,yM,uM,vM,k)
             λ = λf_arr[i,k]
             
-            alpha = -1/Re/v4M
-            visc_pen_2 = alpha*(v2P-v2M)
-            visc_pen_3 = alpha*(v3P-v3M)
-            visc_pen_4 = alpha*(v4P-v4M)
-            if has_bc
-                visc_pen_2 = -alpha*(v2P-v2M)
-                visc_pen_3 = -alpha*(v3P-v3M)
-                visc_pen_4 = alpha*((v2P+v2M)*(v2P-v2M) + (v3P+v3M)*(v3P-v3M) + (v4P-v4M)*(v4P-v4M))/2/v4M
+            if VISCPEN
+                alpha = -1/Re/v4M
+                visc_pen_2 = alpha*(v2P-v2M)
+                visc_pen_3 = alpha*(v3P-v3M)
+                visc_pen_4 = alpha*(v4P-v4M)
+                if has_bc
+                    visc_pen_2 = -alpha*(v2P-v2M)
+                    visc_pen_3 = -alpha*(v3P-v3M)
+                    visc_pen_4 = alpha*((v2P+v2M)*(v2P-v2M) + (v3P+v3M)*(v3P-v3M) + (v4P-v4M)*(v4P-v4M))/2/v4M
+                end
+            else
+                visc_pen_2 = 0.0
+                visc_pen_3 = 0.0
+                visc_pen_4 = 0.0
             end
 
             # flux in x direction
@@ -1032,11 +1048,11 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
                 F_P[1,i,tid] = (BrJ_ii_halved*(fx_1_M+fx_1_P-sigmax_1_M-sigmax_1_P)
                                -λ*(rhoP-rhoM) )
                 F_P[2,i,tid] = (BrJ_ii_halved*(fx_2_M+fx_2_P-sigmax_2_M-sigmax_2_P)
-                               -λ*(rhouP-rhouM) + abs(BrJ_ii_halved)*visc_pen_2)
+                               -λ*(rhouP-rhouM) + 2.0*abs(BrJ_ii_halved)*visc_pen_2)
                 F_P[3,i,tid] = (BrJ_ii_halved*(fx_3_M+fx_3_P-sigmax_3_M-sigmax_3_P)
-                               -λ*(rhovP-rhovM) + abs(BrJ_ii_halved)*visc_pen_3)
+                               -λ*(rhovP-rhovM) + 2.0*abs(BrJ_ii_halved)*visc_pen_3)
                 F_P[4,i,tid] = (BrJ_ii_halved*(fx_4_M+fx_4_P-sigmax_4_M-sigmax_4_P)
-                               -λ*(EP-EM) + abs(BrJ_ii_halved)*visc_pen_4)
+                               -λ*(EP-EM) + 2.0*abs(BrJ_ii_halved)*visc_pen_4)
             end
 
             # flux in y direction
@@ -1044,11 +1060,11 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
                 F_P[1,i,tid] = (BsJ_ii_halved*(fy_1_M+fy_1_P-sigmay_1_M-sigmay_1_P)
                                -λ*(rhoP-rhoM) )
                 F_P[2,i,tid] = (BsJ_ii_halved*(fy_2_M+fy_2_P-sigmay_2_M-sigmay_2_P)
-                               -λ*(rhouP-rhouM) + abs(BsJ_ii_halved)*visc_pen_2)
+                               -λ*(rhouP-rhouM) + 2.0*abs(BsJ_ii_halved)*visc_pen_2)
                 F_P[3,i,tid] = (BsJ_ii_halved*(fy_3_M+fy_3_P-sigmay_3_M-sigmay_3_P)
-                               -λ*(rhovP-rhovM) + abs(BsJ_ii_halved)*visc_pen_3)
+                               -λ*(rhovP-rhovM) + 2.0*abs(BsJ_ii_halved)*visc_pen_3)
                 F_P[4,i,tid] = (BsJ_ii_halved*(fy_4_M+fy_4_P-sigmay_4_M-sigmay_4_P)
-                               -λ*(EP-EM) + abs(BsJ_ii_halved)*visc_pen_4)
+                               -λ*(EP-EM) + 2.0*abs(BsJ_ii_halved)*visc_pen_4)
             end
         end
 
@@ -1348,7 +1364,7 @@ SyJ_vec    ,
 SxJ_db_vec ,
 SyJ_db_vec ,
 BrJ_halved ,
-BsJ_halved             )
+BsJ_halved , wf            )
 geom     = (mapP,Fmask,x,y,J,rxJ,syJ,sJ)
 
 
@@ -1408,15 +1424,21 @@ sy = syJ./J
     fill!(dii_arr,0.0)
     # dt = min(dt0,T-t)
     dt = dt0
-    enforce_BC_timestep!(U,wall_nodal);
+    if HARDBC
+        enforce_BC_timestep!(U,wall_nodal);
+    end
     dt = rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,true);
     dt = min(CFL*dt,T-t)
     @. resW = U + dt*rhsU
-    enforce_BC_timestep!(resW,wall_nodal);
+    if HARDBC
+        enforce_BC_timestep!(resW,wall_nodal);
+    end
     rhs_IDP!(resW,rhsU,t+dt,dt,prealloc,ops,geom,false);
     @. resW = resW+dt*rhsU
     @. resW = 3/4*U+1/4*resW
-    enforce_BC_timestep!(resW,wall_nodal);
+    if HARDBC
+        enforce_BC_timestep!(resW,wall_nodal);
+    end
     rhs_IDP!(resW,rhsU,t+dt/2,dt,prealloc,ops,geom,false);
     @. resW = resW+dt*rhsU
     @. U = 1/3*U+2/3*resW
