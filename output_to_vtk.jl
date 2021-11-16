@@ -34,15 +34,7 @@ const betaR = rhoR/(2*pR)
 
 N = 3
 K1D = 250
-# t=0.027652618923773267
-# t=0.0008610198724528106
-#t=0.004593014339084991
-#t=0.009755907564170784
-# t=0.021238249430540698
-# t=0.01107131919723909
-# t=0.016685099657334425
-#t=0.038174565986393724
-t=0.09433024491945503
+t=0.2
 CFL = 0.75
 XLENGTH = 7/2
 Np = (N+1)*(N+1)
@@ -81,31 +73,31 @@ x_vtk = x_vtk .* ones((N+1)*K1D,1)'
 y_vtk = y_vtk' .* ones((N+1)*Int(round(3.5*K1D)),1)
 rho_vtk,rhou_vtk,rhov_vtk,E_vtk = (zeros(size(x_vtk)) for i = 1:4)
 
-tarr = []
-filenames = readdir("/data/yl184")
-for fn in filenames
-    for str in split(fn,",")
-        if length(str) < 2
-            continue
-        end
-        if "t=" == str[1:2]
-            append!(tarr,parse(Float64,str[3:end]))
-        end
-    end
-end
-unique!(tarr)
+# tarr = []
+# filenames = readdir("/data/yl184")
+# for fn in filenames
+#     for str in split(fn,",")
+#         if length(str) < 2
+#             continue
+#         end
+#         if "t=" == str[1:2]
+#             append!(tarr,parse(Float64,str[3:end]))
+#         end
+#     end
+# end
+# unique!(tarr)
 
-pvd = paraview_collection("/data/yl184/N=$N,K1D=$K1D,CFL=$CFL,x=$XLENGTH,element-wise", append=true)
+# pvd = paraview_collection("/data/yl184/N=$N,K1D=$K1D,CFL=$CFL,x=$XLENGTH,element-wise", append=true)
 
-for t in tarr
-    if t > 0.0
-        println("Current time $t")
-        flush(stdout)
-        vtk_grid("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH",x_vtk,y_vtk) do vtk
-            rho = readdlm("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rho,dmr.txt")
-            rhou = readdlm("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhou,dmr.txt")
-            rhov = readdlm("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhov,dmr.txt")
-            E = readdlm("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,E,dmr.txt")
+# for t in tarr
+    # if t > 0.0
+        # println("Current time $t")
+        # flush(stdout)
+        vtk_grid("N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH",x_vtk,y_vtk) do vtk
+            rho = readdlm("N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rho,dmr.txt")
+            rhou = readdlm("N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhou,dmr.txt")
+            rhov = readdlm("N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhov,dmr.txt")
+            E = readdlm("N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,E,dmr.txt")
 
             for k = 1:Int(round(3.5*K1D))*K1D
                 kx = mod1(k,Int(round(3.5*K1D)))
@@ -120,9 +112,9 @@ for t in tarr
             vtk["rhou"] = rhou_vtk
             vtk["rhov"] = rhov_vtk
             vtk["E"]    = E_vtk
-            pvd[t] = vtk
+            # pvd[t] = vtk
         end 
-    end
-end
+    # end
+# end
 
-vtk_save(pvd)
+# vtk_save(pvd)
