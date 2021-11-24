@@ -5,6 +5,7 @@ using LinearAlgebra
 using SparseArrays
 using BenchmarkTools
 using UnPack
+using DelimitedFiles
 
 
 push!(LOAD_PATH, "./src")
@@ -21,6 +22,7 @@ using EntropyStableEuler
 
 const POSTOL = 1e-14 
 const TOL = 5e-16
+const CFL = 0.5
 
 # Ignacio - Leblanc shocktube 2
 const γ = 5/3
@@ -171,7 +173,7 @@ function flux_central(c_ij,f_i,f_j)
     return c_ij*(f_i+f_j)
 end
 
-function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,dt,in_s1)
+function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,dt,in_s1,is_low_order)
     p = pfun_nd.(U[1],U[2],U[3])
     flux = zero.(U)
     @. flux[1] = U[2]
@@ -323,6 +325,10 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,dt,in_s1)
                 end
             end
         end
+        if is_low_order
+            l = 0.0
+        end
+
         for i = 1:N+1
             for j = 1:N+1
                 if i != j
@@ -503,12 +509,14 @@ end
 
 exact_sol = exact_sol_Leblanc
 
-Narr = [2]
-Karr = [200;400]
+Narr = [2;5]
+Karr = [50;100;200;400;800]
+low_order_arr = [true;false]
 
 # Start N, K loop
 for N in Narr
 for K in Karr
+for is_low_order in low_order_arr
 
 "Approximation parameters"
 # N = 2 # The order of approximation
@@ -622,18 +630,17 @@ while t < T
 
     dt = Inf
     # SSPRK(3,3)
-    rhsU,dt = rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,dt,true)
+    rhsU,dt = rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,dt,true,is_low_order)
     #rhsU = rhs_high(U,K,N,Mlump_inv,S)
     # rhsU,dt = rhs_IDPlow(U,K,N,Mlump_inv,wq)
-    dt = 0.5*dt
-    dt = min(dt,T-t)
+    dt = min(CFL*dt,T-t)
     @. resW = U + dt*rhsU
-    rhsU,_ = rhs_IDP(resW,K,N,wq,S,S0,Mlump_inv,dt,false)
+    rhsU,_ = rhs_IDP(resW,K,N,wq,S,S0,Mlump_inv,dt,false,is_low_order)
     #rhsU = rhs_high(resW,K,N,Mlump_inv,S)
     # rhsU,_ = rhs_IDPlow(resW,K,N,Mlump_inv,wq)
     @. resZ = resW+dt*rhsU
     @. resW = 3/4*U+1/4*resZ
-    rhsU,_ = rhs_IDP(resW,K,N,wq,S,S0,Mlump_inv,dt,false)
+    rhsU,_ = rhs_IDP(resW,K,N,wq,S,S0,Mlump_inv,dt,false,is_low_order)
     #rhsU = rhs_high(resW,K,N,Mlump_inv,S)
     # rhsU,_ = rhs_IDPlow(resW,K,N,Mlump_inv,wq)
     @. resZ = resW+dt*rhsU
@@ -698,6 +705,14 @@ println("L1 error is $L1err")
 println("L2 error is $L2err")
 println("Linf error is $Linferr")
 
+open("/data/yl184/1D-euler-conv/N=$N,K=$K,CFL=$CFL,LOW=$is_low_order,x,1D-euler-conv.txt","w") do io
+    writedlm(io,x)
+end
+open("/data/yl184/1D-euler-conv/N=$N,K=$K,CFL=$CFL,LOW=$is_low_order,rho,1D-euler-conv.txt","w") do io
+    writedlm(io,U[1])
+end
+
+end
 end
 end # End N, K loop
 

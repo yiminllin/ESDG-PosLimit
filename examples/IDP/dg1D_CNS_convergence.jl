@@ -5,6 +5,7 @@ using LinearAlgebra
 using SparseArrays
 using BenchmarkTools
 using UnPack
+using DelimitedFiles
 
 push!(LOAD_PATH, "./src")
 using CommonUtils
@@ -19,11 +20,19 @@ using EntropyStableEuler.Fluxes1D
 
 const POSTOL = 1e-14
 const TOL = 5e-16
+const CFL = 0.5
+
+const ISSMOOTH = false#true
 
 # Becker viscous shocktube
 const γ = 1.4
-const M_0 = 20.0
-const mu = 0.001
+if ISSMOOTH
+    const M_0 = 3.0  # Smooth
+    const mu = 0.01
+else
+    const M_0 = 20.0   # Sharp
+    const mu = 0.001
+end
 const lambda = 2/3*mu
 const Pr = 3/4
 const cp = γ/(γ-1)
@@ -261,7 +270,7 @@ function rhs_viscous(U,K,N,Mlump_inv,Vf,mapP,nxJ,S,Dr,LIFT)
     return sigmax, sigma
 end
 
-function rhs_IDP(U,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,in_s1)
+function rhs_IDP(U,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,in_s1,is_low_order)
     p = pfun_nd.(U[1],U[2],U[3])
     flux = zero.(U)
     @. flux[1] = U[2]
@@ -438,6 +447,10 @@ function rhs_IDP(U,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,in_s1)
                 end
             end
         end
+        if is_low_order
+            l = 0.0
+        end
+
         for i = 1:N+1
             for j = 1:N+1
                 if i != j
@@ -599,11 +612,18 @@ function rhs_IDPlow(U,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,in_s1)
     return rhsU,dt
 end
 
-Karr = [200;400]
+# Narr = [2;3;4]
+# Karr = [50;100;200;400]
+Narr = [2;3]
+Karr = [1600]#[50;100;200;400;800]
+low_order_arr = [true;false]
+
+for N in Narr
 for K in Karr
+for is_low_order in low_order_arr
 
 "Approximation parameters"
-N = 2 # The order of approximation
+# N = 2 # The order of approximation
 # K = 100#800
 T = 1.0#3.0
 
@@ -700,19 +720,22 @@ while t < T
 
     # SSPRK(3,3)
     dt = Inf
-    rhsU,dt = rhs_IDP(U,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,true)
+    rhsU,dt = rhs_IDP(U,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,true,is_low_order)
     # rhsU,dt = rhs_IDPlow(U,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,true)
-    dt = 0.5*dt
-    dt = min(dt,T-t)
+    dt = min(CFL*dt,T-t)
     @. resW = U + dt*rhsU
-    rhsU,_ = rhs_IDP(resW,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,false)
+    rhsU,_ = rhs_IDP(resW,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,false,is_low_order)
     # rhsU,_ = rhs_IDPlow(resW,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,false)
     @. resZ = resW+dt*rhsU
     @. resW = 3/4*U+1/4*resZ
-    rhsU,_ = rhs_IDP(resW,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,false)
+    rhsU,_ = rhs_IDP(resW,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,false,is_low_order)
     # rhsU,_ = rhs_IDPlow(resW,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,false)
     @. resZ = resW+dt*rhsU
     @. U = 1/3*U+2/3*resZ
+
+    U[1][end,end] = rhoR
+    U[2][end,end] = rhoR*uR
+    U[3][end,end] = ER
 
     t = t + dt
     i = i + 1
@@ -760,5 +783,15 @@ println("L1 error is $L1err")
 println("L2 error is $L2err")
 println("Linf error is $Linferr")
 
+open("/data/yl184/1D-CNS-conv/N=$N,K=$K,CFL=$CFL,LOW=$is_low_order,issmooth=$ISSMOOTH,x,1D-CNS-conv.txt","w") do io
+    writedlm(io,x)
+end
+open("/data/yl184/1D-CNS-conv/N=$N,K=$K,CFL=$CFL,LOW=$is_low_order,issmooth=$ISSMOOTH,rho,1D-CNS-conv.txt","w") do io
+    writedlm(io,U[1])
+end
+
+
+end
+end
 end # for k in Karr
 # println("Linf error is $Linferr")
