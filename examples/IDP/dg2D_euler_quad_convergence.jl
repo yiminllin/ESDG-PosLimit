@@ -194,14 +194,16 @@ end
     return l
 end
 
+const LIMITOPT = 1 # 1 if elementwise limiting lij, 2 if elementwise limiting li
 const TOL = 5e-16
 const POSTOL = 1e-14
 const WALLPT = 1.0/6.0
 const Nc = 4 # number of components
+
 "Approximation parameters"
-const N = 2
-const K1D = 20
-const T = 1.0
+const N = parse(Int,ARGS[1])    # N = 2,3,4
+const K1D = parse(Int,ARGS[2])  # K = 10,20,40,80,160
+const T = 2.0#2.0
 const dt0 = 1e-1
 const XLENGTH = 2.0
 const CFL = 0.9
@@ -215,8 +217,8 @@ const γ = 1.4
 
 "Mesh related variables"
 VX, VY, EToV = uniform_quad_mesh(Int(round(XLENGTH*K1D)),K1D)
-@. VX = (VX+1)/2*XLENGTH*5
-@. VY = (VY+1)/2*5
+@. VX = (VX+1)/2*XLENGTH*5*2
+@. VY = (VY+1)/2*5*2
 
 rd = init_reference_quad(N,gauss_lobatto_quad(0,0,N))
 "Initialize reference element"
@@ -410,7 +412,7 @@ end
 end
 
 function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
-    f_x,f_y,rholog,betalog,U_low,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr = prealloc
+    f_x,f_y,rholog,betalog,U_low,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr,L_plot = prealloc
     S0xJ_vec,S0yJ_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,SxJ_db_vec,SyJ_db_vec,Sr_nnzi,Sr_nnzj,Ss_nnzi,Ss_nnzj,MJ_inv,BrJ_halved,BsJ_halved,coeff_arr,S_nnzi,S_nnzj = ops
     mapP,Fmask,x,y = geom
 
@@ -664,6 +666,7 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
             l_e = min(l_e,L[i,tid])
         end
         l_em1 = l_e-1.0
+        L_plot[k] = l_e
 
         for ni = 1:S_nnz_hv
             i     = S_nnzi[ni]
@@ -717,10 +720,10 @@ mapP[mapB] = mapPB
 
 const Np = (N+1)*(N+1)
 const Nfp    = Nfaces*(N+1)
-const J   = 25*1.0/K1D/K1D/4
-const Jf  = 5*1.0/K1D/2
-const rxJ = 2*K1D*J/5
-const syJ = 2*K1D*J/5
+const J   = 25*1.0/K1D/K1D/4*4
+const Jf  = 5*1.0/K1D/2*2
+const rxJ = 2*K1D*J/5/2
+const syJ = 2*K1D*J/5/2
 const sJ  = Jf
 const rxJ_sq = rxJ^2
 const syJ_sq = syJ^2
@@ -826,9 +829,9 @@ const TOP_INIT = (1+sqrt(3)/6)/sqrt(3)
 # at_left(x,y) = y-sqrt(3)*x+sqrt(3)/6 > 0.0
 function vortex_sol(x,y,t)
 
-    x0 = 4.5
-    y0 = 2.5
-    beta = 8.5
+    x0 = 9.0
+    y0 = 5.0
+    beta = 8.5 
     r2 = @. (x-x0-t)^2 + (y-y0)^2
 
     u = @. 1 - beta*exp(1-r2)*(y-y0)/(2*pi)
@@ -879,8 +882,9 @@ wspd_arr = zeros(Float64,Np,2,K)
 λ_arr    = zeros(Float64,S0r_nnz_hv,2,K) # Assume S0r and S0s has same number of nonzero entries
 λf_arr   = zeros(Float64,Nfp,K)
 dii_arr  = zeros(Float64,Np,K)
+L_plot   = zeros(Float64,K)
 
-prealloc = (f_x,f_y,rholog,betalog,U_low,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr)
+prealloc = (f_x,f_y,rholog,betalog,U_low,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr,L_plot)
 ops      = (S0xJ_vec,  S0yJ_vec,  S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,
             SxJ_db_vec,SyJ_db_vec,Sr_nnzi, Sr_nnzj, Ss_nnzi, Ss_nnzj,
             MJ_inv,BrJ_halved,BsJ_halved,coeff_arr,S_nnzi,S_nnzj)
@@ -911,10 +915,10 @@ dt = dt0
 dt_hist = []
 i = 1
 
-open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,x,dmr.txt","w") do io
+open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x,convquad.txt","w") do io
     writedlm(io,x)
 end
-open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,y,dmr.txt","w") do io
+open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,y,convquad.txt","w") do io
     writedlm(io,y)
 end
 
@@ -941,35 +945,40 @@ end
     global i = i + 1
     # if ((mod(i,100) == 1) | (i >= 55))
     if (mod(i,100) == 1)
-        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rho,convquad.txt","w") do io
+        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,rho,convquad.txt","w") do io
             writedlm(io,U[1,:,:])
         end
-        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhou,convquad.txt","w") do io
+        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,rhou,convquad.txt","w") do io
             writedlm(io,U[2,:,:])
         end
-        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhov,convquad.txt","w") do io
+        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,rhov,convquad.txt","w") do io
             writedlm(io,U[3,:,:])
         end
-        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,E,convquad.txt","w") do io
+        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,E,convquad.txt","w") do io
             writedlm(io,U[4,:,:])
+        end
+        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,L_plot,convquad.txt","w") do io
+            writedlm(io,L_plot)
         end
 
     end
 end
 
-open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rho,convquad.txt","w") do io
+open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,rho,convquad.txt","w") do io
     writedlm(io,U[1,:,:])
 end
-open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhou,convquad.txt","w") do io
+open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,rhou,convquad.txt","w") do io
     writedlm(io,U[2,:,:])
 end
-open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhov,convquad.txt","w") do io
+open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,rhov,convquad.txt","w") do io
     writedlm(io,U[3,:,:])
 end
-open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,E,convquad.txt","w") do io
+open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,E,convquad.txt","w") do io
     writedlm(io,U[4,:,:])
 end
-
+open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,L_plot,convquad.txt","w") do io
+    writedlm(io,L_plot)
+end
 
 exact_U = @. vortex_sol.(x,y,T)
 exact_rho = [x[1] for x in exact_U]
