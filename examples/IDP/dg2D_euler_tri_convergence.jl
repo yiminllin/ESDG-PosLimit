@@ -164,17 +164,18 @@ function build_meshfree_sbp(rq,sq,wq,rf,sf,wf,nrJ,nsJ,α)
     return Qr,Qs,E,Br,Bs,A
 end
 
+const LIMITOPT = 1 # 1 if elementwise limiting lij, 2 if elementwise limiting li
 const TOL = 5e-16
 const POSTOL = 1e-14
 const WALLPT = 1.0/6.0
 const Nc = 4 # number of components
 "Approximation parameters"
-const N = 2
-const K1D = 80
-const T = 1.0
+const N = parse(Int,ARGS[1])     # N = 2,3,4
+const K1D = parse(Int,ARGS[2])  # K = 2,4,8,16,32
+const T = 2.0#2.0
 const dt0 = 1e-2
 const XLENGTH = 2.0
-const CFL = 0.9
+const CFL = 0.5
 const NUM_THREADS = Threads.nthreads()
 qnode_choice = "GQ" #"GQ" "GL" "tri_diage"
 
@@ -188,8 +189,8 @@ VX, VY, EToV = uniform_tri_mesh(Kx,Ky)
 
 # @. VX = 15*(1+VX)/2
 # @. VY = 5*VY
-@. VX = 10*(1+VX)/2
-@. VY = 5*(1+VY)/2
+@. VX = 10*(1+VX)/2*2
+@. VY = 5*(1+VY)/2*2
 FToF = CommonUtils.connect_mesh(EToV,tri_face_vertices())
 Nfaces,K = size(FToF)
 
@@ -216,7 +217,8 @@ E_ES = Vf*Pq;
 # Need to choose α so that Qr, Qs have zero row sums (and maybe a minimum number of neighbors)
 # α = 4 # for N=1
 # α = 2.5 #for N=2
-α = 3.5 # for N=3
+α = 3.5 # for N=3,4
+# α = 3 # N = 3
 Qr_ID,Qs_ID,E,Br,Bs,A = build_meshfree_sbp(rq,sq,wq,rf,sf,wf,nrJ,nsJ,α)
 if (norm(sum(Qr_ID,dims=2)) > 1e-10) | (norm(sum(Qs_ID,dims=2)) > 1e-10)
     error("Qr_ID or Qs_ID doesn't sum to zero for α = $α")
@@ -557,7 +559,7 @@ end
 end
 
 function rhs_Limited!(U,rhsU,dt,prealloc,ops,geom,in_s1)
-    f_x,f_y,rholog,betalog,U_low,F_low,F_high,F_P,L,λ_arr,λf_arr,dii_arr = prealloc
+    f_x,f_y,rholog,betalog,U_low,F_low,F_high,F_P,L,λ_arr,λf_arr,dii_arr,L_plot = prealloc
     Sr,Ss,S0r,S0s,Br,Bs,Minv,Extrap = ops
     mapP,Fmask,rxJ,ryJ,sxJ,syJ,J = geom
 
@@ -747,35 +749,63 @@ function rhs_Limited!(U,rhsU,dt,prealloc,ops,geom,in_s1)
             end
         end
 
-        # Calculate limiting parameters
-        for j = 2:Np
-            for i = 1:j-1
-                coeff_i = dt*(Np-1)*Minv[i,i]/J_k
-                coeff_j = dt*(Np-1)*Minv[j,j]/J_k
+        if LIMITOPT == 1
+            # Calculate limiting parameters
+            for j = 2:Np
+                for i = 1:j-1
+                    coeff_i = dt*(Np-1)*Minv[i,i]/J_k
+                    coeff_j = dt*(Np-1)*Minv[j,j]/J_k
+                    rhoi  = U_low[1,i,tid]
+                    rhoui = U_low[2,i,tid]
+                    rhovi = U_low[3,i,tid]
+                    Ei    = U_low[4,i,tid]
+                    rhoj  = U_low[1,j,tid]
+                    rhouj = U_low[2,j,tid]
+                    rhovj = U_low[3,j,tid]
+                    Ej    = U_low[4,j,tid]
+                    rhoP  = (F_low[1,i,j,tid]-F_high[1,i,j,tid])
+                    rhouP = (F_low[2,i,j,tid]-F_high[2,i,j,tid])
+                    rhovP = (F_low[3,i,j,tid]-F_high[3,i,j,tid])
+                    EP    = (F_low[4,i,j,tid]-F_high[4,i,j,tid])
+                    rhoP_i  = coeff_i*rhoP  
+                    rhouP_i = coeff_i*rhouP 
+                    rhovP_i = coeff_i*rhovP 
+                    EP_i    = coeff_i*EP    
+                    rhoP_j  = -coeff_j*rhoP  
+                    rhouP_j = -coeff_j*rhouP 
+                    rhovP_j = -coeff_j*rhovP 
+                    EP_j    = -coeff_j*EP
+                    l = min(limiting_param(rhoi,rhoui,rhovi,Ei,rhoP_i,rhouP_i,rhovP_i,EP_i),
+                            limiting_param(rhoj,rhouj,rhovj,Ej,rhoP_j,rhouP_j,rhovP_j,EP_j))
+                    L[i,j,tid] = l
+                    L[j,i,tid] = l
+                end
+            end
+        elseif LIMITOPT == 2
+            for i = 1:Np
                 rhoi  = U_low[1,i,tid]
                 rhoui = U_low[2,i,tid]
                 rhovi = U_low[3,i,tid]
                 Ei    = U_low[4,i,tid]
-                rhoj  = U_low[1,j,tid]
-                rhouj = U_low[2,j,tid]
-                rhovj = U_low[3,j,tid]
-                Ej    = U_low[4,j,tid]
-                rhoP  = (F_low[1,i,j,tid]-F_high[1,i,j,tid])
-                rhouP = (F_low[2,i,j,tid]-F_high[2,i,j,tid])
-                rhovP = (F_low[3,i,j,tid]-F_high[3,i,j,tid])
-                EP    = (F_low[4,i,j,tid]-F_high[4,i,j,tid])
-                rhoP_i  = coeff_i*rhoP  
-                rhouP_i = coeff_i*rhouP 
-                rhovP_i = coeff_i*rhovP 
-                EP_i    = coeff_i*EP    
-                rhoP_j  = -coeff_j*rhoP  
-                rhouP_j = -coeff_j*rhouP 
-                rhovP_j = -coeff_j*rhovP 
-                EP_j    = -coeff_j*EP
-                l = min(limiting_param(rhoi,rhoui,rhovi,Ei,rhoP_i,rhouP_i,rhovP_i,EP_i),
-                        limiting_param(rhoj,rhouj,rhovj,Ej,rhoP_j,rhouP_j,rhovP_j,EP_j))
-                L[i,j,tid] = l
-                L[j,i,tid] = l
+                rhoP_i  = 0.0
+                rhouP_i = 0.0
+                rhovP_i = 0.0
+                EP_i    = 0.0
+                coeff   = dt*Minv[i,i]/J_k
+                for j = 1:Np
+                    rhoP   = (F_low[1,i,j,tid]-F_high[1,i,j,tid])
+                    rhouP  = (F_low[2,i,j,tid]-F_high[2,i,j,tid])
+                    rhovP  = (F_low[3,i,j,tid]-F_high[3,i,j,tid])
+                    EP     = (F_low[4,i,j,tid]-F_high[4,i,j,tid])
+                    rhoP_i  = rhoP_i  + coeff*rhoP 
+                    rhouP_i = rhouP_i + coeff*rhouP 
+                    rhovP_i = rhovP_i + coeff*rhovP 
+                    EP_i    = EP_i    + coeff*EP 
+                end
+                l = limiting_param(rhoi,rhoui,rhovi,Ei,rhoP_i,rhouP_i,rhovP_i,EP_i)
+                for j = 1:Np
+                    L[i,j,tid] = l
+                end
             end
         end
 
@@ -788,6 +818,9 @@ function rhs_Limited!(U,rhsU,dt,prealloc,ops,geom,in_s1)
             end
         end
         l_em1 = l_e-1.0
+        if in_s1
+            L_plot[k] = l_e
+        end
 
         for j = 2:Np
             for i = 1:j-1
@@ -1120,8 +1153,8 @@ end
 function vortex_sol(x,y,t)
     # x0 = 5
     # y0 = 0
-    x0 = 4.5
-    y0 = 2.5
+    x0 = 9.0
+    y0 = 5.0
     beta = 8.5
     r2 = @. (x-x0-t)^2 + (y-y0)^2
 
@@ -1166,8 +1199,9 @@ L       =  ones(Float64,Np,Np,NUM_THREADS)
 λ_arr    = zeros(Float64,Np,Np,K)
 λf_arr   = zeros(Float64,Nfp,K)
 dii_arr  = zeros(Float64,Np,K)
+L_plot   = zeros(Float64,K)
 
-prealloc = (f_x,f_y,rholog,betalog,U_low,F_low,F_high,F_P,L,λ_arr,λf_arr,dii_arr)
+prealloc = (f_x,f_y,rholog,betalog,U_low,F_low,F_high,F_P,L,λ_arr,λf_arr,dii_arr,L_plot)
 ops      = (Sr,Ss,S0r,S0s,Br,Bs,Minv,E)
 geom     = (mapP,Fmask,rxJ,ryJ,sxJ,syJ,J)
 
@@ -1180,6 +1214,13 @@ resW = zeros(size(U))
 
 dt_hist = []
 i = 1
+
+open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x,convtri.txt","w") do io
+    writedlm(io,xq)
+end
+open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,y,convtri.txt","w") do io
+    writedlm(io,yq)
+end
 
 @time while t < T
     # SSPRK(3,3)
@@ -1208,33 +1249,39 @@ i = 1
     flush(stdout)
     global i = i + 1
     if (mod(i,100) == 1)
-        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rho,convtri.txt","w") do io
+        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,rho,convtri.txt","w") do io
             writedlm(io,U[1,:,:])
         end
-        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhou,convtri.txt","w") do io
+        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,rhou,convtri.txt","w") do io
             writedlm(io,U[2,:,:])
         end
-        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhov,convtri.txt","w") do io
+        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,rhov,convtri.txt","w") do io
             writedlm(io,U[3,:,:])
         end
-        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,E,convtri.txt","w") do io
+        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,E,convtri.txt","w") do io
             writedlm(io,U[4,:,:])
+        end
+        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,L_plot,convtri.txt","w") do io
+            writedlm(io,L_plot)
         end
 
     end
 end
 
-open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rho,convtri.txt","w") do io
+open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,rho,convtri.txt","w") do io
     writedlm(io,U[1,:,:])
 end
-open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhou,convtri.txt","w") do io
+open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,rhou,convtri.txt","w") do io
     writedlm(io,U[2,:,:])
 end
-open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhov,convtri.txt","w") do io
+open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,rhov,convtri.txt","w") do io
     writedlm(io,U[3,:,:])
 end
-open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,E,convtri.txt","w") do io
+open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,E,convtri.txt","w") do io
     writedlm(io,U[4,:,:])
+end
+open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,L_plot,convtri.txt","w") do io
+    writedlm(io,L_plot)
 end
 
 
