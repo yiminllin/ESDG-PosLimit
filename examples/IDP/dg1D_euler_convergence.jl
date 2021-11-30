@@ -338,6 +338,46 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,dt,in_s1,is_low_order)
             end
         end
 
+        # # li limiting
+        # for i = 1:N+1
+        #     #lambda_j = (i >= 2 && i <= N) ? 1/N : 1/(N+1)
+        #     lambda_j = 1/N
+        #     m_i = J*wq[i]
+        #     for j = 1:N+1
+        #         if i != j
+        #             for c = 1:3
+        #                 P_ij[c] = dt/(m_i*lambda_j)*(F_low[c][i,j]-F_high[c][i,j])
+        #             end
+        #             L[i,j] = limiting_param([U_low[1][i]; U_low[2][i]; U_low[3][i]],P_ij)
+        #         end
+        #     end
+        # end
+
+        # li_min = 1.0
+        # for i = 1:N+1
+        #     lambda_j = 1/N
+        #     m_i = J*wq[i]
+        #     for c = 1:3
+        #         P_ij[c] = 0.0
+        #     end
+        #     for j = 1:N+1
+        #         for c = 1:3
+        #             P_ij[c] += dt/(m_i*lambda_j)*(F_low[c][i,j]-F_high[c][i,j])
+        #         end
+        #     end
+        #     l = limiting_param([U_low[1][i]; U_low[2][i]; U_low[3][i]],P_ij)
+        #     li_min = min(li_min,l)
+        # end
+
+        # for i = 1:N+1
+        #     for j = 1:N+1
+        #         if i != j
+        #             L[i,j] = li_min
+        #             L[j,i] = li_min
+        #         end
+        #     end
+        # end
+
         # construct rhs
         for c = 1:3
             # With limiting
