@@ -413,6 +413,23 @@ function rhs_IDP(U,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,in_s1,is_low_ord
             U_low[c][end] -= F_low_P[c][2]
             U_low[c] .= U[c][:,k]+dt/J*Mlump_inv*U_low[c]
         end
+        U_high =  [zeros(N+1,1),zeros(N+1,1),zeros(N+1,1)]
+        for c = 1:3
+            U_high[c] .= sum(-F_high[c],dims=2)
+            U_high[c][1] -= F_high_P[c][1]
+            U_high[c][end] -= F_high_P[c][2]
+            U_high[c] .= U[c][:,k]+dt/J*Mlump_inv*U_high[c]
+        end
+        is_H_positive = true
+        for i = 1:N+1
+            rhoH_i  = U_high[1][i]
+            rhouH_i = U_high[2][i]
+            EH_i    = U_high[3][i]
+            pH_i    = pfun_nd(rhoH_i,rhouH_i,EH_i)
+            if pH_i < POSTOL || rhoH_i < POSTOL
+                is_H_positive = false
+            end
+        end
 
         for i = 1:N+1
             lambda_j = 1/N
@@ -422,7 +439,11 @@ function rhs_IDP(U,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,in_s1,is_low_ord
                     for c = 1:3
                         P_ij[c] = dt/(m_i*lambda_j)*(F_low[c][i,j]-F_high[c][i,j])
                     end
-                    L[i,j] = limiting_param([U_low[1][i]; U_low[2][i]; U_low[3][i]],P_ij)
+                    if !is_H_positive
+                        L[i,j] = limiting_param([U_low[1][i]; U_low[2][i]; U_low[3][i]],P_ij)
+                    else
+                        L[i,j] = 1.0
+                    end
                 end
             end
         end
@@ -615,8 +636,8 @@ end
 # Narr = [2;3;4]
 # Karr = [50;100;200;400]
 Narr = [2;3]
-Karr = [1600]#[50;100;200;400;800]
-low_order_arr = [true;false]
+Karr = [50;100;200;400;800;1600]#[1600]#[50;100;200;400;800]
+low_order_arr = [false]#[true;false]
 
 for N in Narr
 for K in Karr
