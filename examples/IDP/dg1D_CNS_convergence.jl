@@ -270,7 +270,7 @@ function rhs_viscous(U,K,N,Mlump_inv,Vf,mapP,nxJ,S,Dr,LIFT)
     return sigmax, sigma
 end
 
-function rhs_IDP(U,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,in_s1,is_low_order)
+function rhs_IDP(U,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,T,dt,in_s1,is_low_order)
     p = pfun_nd.(U[1],U[2],U[3])
     flux = zero.(U)
     @. flux[1] = U[2]
@@ -348,6 +348,7 @@ function rhs_IDP(U,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,in_s1,is_low_ord
                 dt = min(dt,1.0*wq[i]*J/2.0/d_ii_arr[i,k])
             end
         end
+        dt = min(CFL*dt,T-t)
     end
 
     # TODO: hardcoded
@@ -741,15 +742,14 @@ while t < T
 
     # SSPRK(3,3)
     dt = Inf
-    rhsU,dt = rhs_IDP(U,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,true,is_low_order)
+    rhsU,dt = rhs_IDP(U,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,T,dt,true,is_low_order)
     # rhsU,dt = rhs_IDPlow(U,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,true)
-    dt = min(CFL*dt,T-t)
     @. resW = U + dt*rhsU
-    rhsU,_ = rhs_IDP(resW,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,false,is_low_order)
+    rhsU,_ = rhs_IDP(resW,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,T,dt,false,is_low_order)
     # rhsU,_ = rhs_IDPlow(resW,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,false)
     @. resZ = resW+dt*rhsU
     @. resW = 3/4*U+1/4*resZ
-    rhsU,_ = rhs_IDP(resW,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,false,is_low_order)
+    rhsU,_ = rhs_IDP(resW,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,T,dt,false,is_low_order)
     # rhsU,_ = rhs_IDPlow(resW,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,false)
     @. resZ = resW+dt*rhsU
     @. U = 1/3*U+2/3*resZ

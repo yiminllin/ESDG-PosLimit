@@ -173,7 +173,7 @@ function flux_central(c_ij,f_i,f_j)
     return c_ij*(f_i+f_j)
 end
 
-function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,dt,in_s1,is_low_order)
+function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,T,dt,in_s1,is_low_order)
     p = pfun_nd.(U[1],U[2],U[3])
     flux = zero.(U)
     @. flux[1] = U[2]
@@ -241,6 +241,7 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,dt,in_s1,is_low_order)
                 dt = min(dt,1.0*wq[i]*J/2.0/dii_arr[i,k])
             end
         end
+        dt = min(CFL*dt,T-t)
     end
 
     for k = 1:K
@@ -692,17 +693,16 @@ while t < T
 
     dt = Inf
     # SSPRK(3,3)
-    rhsU,dt = rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,dt,true,is_low_order)
+    rhsU,dt = rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,T,dt,true,is_low_order)
     #rhsU = rhs_high(U,K,N,Mlump_inv,S)
     # rhsU,dt = rhs_IDPlow(U,K,N,Mlump_inv,wq)
-    dt = min(CFL*dt,T-t)
     @. resW = U + dt*rhsU
-    rhsU,_ = rhs_IDP(resW,K,N,wq,S,S0,Mlump_inv,dt,false,is_low_order)
+    rhsU,_ = rhs_IDP(resW,K,N,wq,S,S0,Mlump_inv,T,dt,false,is_low_order)
     #rhsU = rhs_high(resW,K,N,Mlump_inv,S)
     # rhsU,_ = rhs_IDPlow(resW,K,N,Mlump_inv,wq)
     @. resZ = resW+dt*rhsU
     @. resW = 3/4*U+1/4*resZ
-    rhsU,_ = rhs_IDP(resW,K,N,wq,S,S0,Mlump_inv,dt,false,is_low_order)
+    rhsU,_ = rhs_IDP(resW,K,N,wq,S,S0,Mlump_inv,T,dt,false,is_low_order)
     #rhsU = rhs_high(resW,K,N,Mlump_inv,S)
     # rhsU,_ = rhs_IDPlow(resW,K,N,Mlump_inv,wq)
     @. resZ = resW+dt*rhsU
