@@ -165,6 +165,7 @@ function build_meshfree_sbp(rq,sq,wq,rf,sf,wf,nrJ,nsJ,α)
 end
 
 const LIMITOPT = 1 # 1 if elementwise limiting lij, 2 if elementwise limiting li
+const POSDETECT = 0 # 1 if turn on detection, 0 otherwise
 const TOL = 5e-16
 const POSTOL = 1e-14
 const WALLPT = 1.0/6.0
@@ -172,8 +173,8 @@ const Nc = 4 # number of components
 "Approximation parameters"
 const N = parse(Int,ARGS[1])     # N = 2,3,4
 const K1D = parse(Int,ARGS[2])  # K = 2,4,8,16,32
-const T = 2.0#2.0
-const dt0 = 1e-2
+const T = 2.0#0.1614
+const dt0 = 1e+2
 const XLENGTH = 2.0
 const CFL = 0.5
 const NUM_THREADS = Threads.nthreads()
@@ -218,7 +219,13 @@ E_ES = Vf*Pq;
 # α = 4 # for N=1
 # α = 2.5 #for N=2
 α = 3.5 # for N=3,4
-# α = 3 # N = 3
+if N == 1
+    α = 4
+elseif N == 2
+    α = 2.5
+elseif N == 3 || N == 4
+    α = 3.5
+end
 Qr_ID,Qs_ID,E,Br,Bs,A = build_meshfree_sbp(rq,sq,wq,rf,sf,wf,nrJ,nsJ,α)
 if (norm(sum(Qr_ID,dims=2)) > 1e-10) | (norm(sum(Qs_ID,dims=2)) > 1e-10)
     error("Qr_ID or Qs_ID doesn't sum to zero for α = $α")
@@ -558,9 +565,9 @@ end
     F_high[4,j,i,tid] = -FH4
 end
 
-function rhs_Limited!(U,rhsU,dt,prealloc,ops,geom,in_s1)
-    f_x,f_y,rholog,betalog,U_low,F_low,F_high,F_P,L,λ_arr,λf_arr,dii_arr,L_plot = prealloc
-    Sr,Ss,S0r,S0s,Br,Bs,Minv,Extrap = ops
+function rhs_Limited!(U,rhsU,T,dt,prealloc,ops,geom,in_s1)
+    f_x,f_y,rholog,betalog,U_low,U_high,F_low,F_high,F_P,L,λ_arr,λf_arr,dii_arr,L_plot,U_hat,indicator = prealloc
+    Sr,Ss,S0r,S0s,Br,Bs,Minv,Extrap,Pq,Vq,wq,Vq_hat,M = ops
     mapP,Fmask,rxJ,ryJ,sxJ,syJ,J = geom
 
     fill!(rhsU,0.0)
@@ -660,7 +667,45 @@ function rhs_Limited!(U,rhsU,dt,prealloc,ops,geom,in_s1)
                 dt = min(dt,1.0/(Minv[i,i]/J_k)/2.0/dii_arr[i,k])
             end
         end
+        dt = min(CFL*dt,T-t)
     end
+
+    #=
+    # # Troubled cell indicator
+    for c = 1:Nc
+        U_hat[c,:,:] = Vq_hat*U[c,:,:]
+    end
+
+    @batch for k = 1:K
+        J_k = J[1,k]
+        indicator[k] = sum(J_k*(M*abs.(U_hat[1,:,k]-U[1,:,k]).^2))/sum(J_k*(M*abs.(U[1,:,k]).^2)) +
+                       #sum(J_k*(M*abs.(U_hat[2,:,k]-U[2,:,k]).^2))/sum(J_k*(M*abs.(U[2,:,k]).^2)) +
+                       # TODO: ignore third zero component
+                       #sum(J_k*(M*abs.(U_hat[3,:,k]-U[3,:,k]).^2))/sum(J_k*(M*abs.(U[3,:,k]).^2)) +
+                       sum(J_k*(M*abs.(U_hat[4,:,k]-U[4,:,k]).^2))/sum(J_k*(M*abs.(U[4,:,k]).^2))
+
+        if sum(J_k*(M*abs.(U[3,:,k]).^2)) > TOL
+            indicator[k] = indicator[k] + sum(J_k*(M*abs.(U_hat[3,:,k]-U[3,:,k]).^2))/sum(J_k*(M*abs.(U[3,:,k]).^2))
+        end
+        if sum(J_k*(M*abs.(U[2,:,k]).^2)) > TOL
+            indicator[k] = indicator[k] + sum(J_k*(M*abs.(U_hat[2,:,k]-U[2,:,k]).^2))/sum(J_k*(M*abs.(U[2,:,k]).^2))
+        end
+    end
+    # @show indicator[1]
+    # @show indicator[541]
+    indicator = log.(10,indicator)
+    # @show indicator[1]
+    # @show indicator[541]
+    s0 = log(10,1/N^4)
+    @show s0
+    @show maximum(indicator)
+    @show minimum(indicator)
+    # indicator = indicator .> s0 + .5 # N = 3
+    # indicator = indicator .> s0 - .5# N = 4
+    indicator = indicator .> s0 + 1
+    @show sum(indicator)
+    # @show indicator[1]
+    =#
 
     @batch for k = 1:K
         tid = Threads.threadid()
@@ -673,6 +718,7 @@ function rhs_Limited!(U,rhsU,dt,prealloc,ops,geom,in_s1)
         for i = 1:Np
             for c = 1:Nc
                 U_low[c,i,tid] = 0.0
+                U_high[c,i,tid] = 0.0
             end
         end
 
@@ -731,7 +777,8 @@ function rhs_Limited!(U,rhsU,dt,prealloc,ops,geom,in_s1)
         for j = 1:Np
             for i = 1:Np
                 for c = 1:Nc
-                    U_low[c,i,tid] = U_low[c,i,tid] + F_low[c,i,j,tid]
+                    U_low[c,i,tid]  = U_low[c,i,tid]  + F_low[c,i,j,tid]
+                    U_high[c,i,tid] = U_high[c,i,tid] + F_high[c,i,j,tid]
                 end
             end
         end
@@ -739,17 +786,135 @@ function rhs_Limited!(U,rhsU,dt,prealloc,ops,geom,in_s1)
         for i = 1:Nfp
             iM = Fmask[i]
             for c = 1:Nc
-                U_low[c,iM,tid] = U_low[c,iM,tid] + F_P[c,i,tid]
+                U_low[c,iM,tid]  = U_low[c,iM,tid]  + F_P[c,i,tid]
+                U_high[c,iM,tid] = U_high[c,iM,tid] + F_P[c,i,tid]
             end
         end
 
         for i = 1:Np
             for c = 1:Nc
-                U_low[c,i,tid] = U[c,i,k] - dt*Minv[i,i]/J_k*U_low[c,i,tid]
+                U_low[c,i,tid]  = U[c,i,k] - dt*Minv[i,i]/J_k*U_low[c,i,tid]
+                U_high[c,i,tid] = U[c,i,k] - dt*Minv[i,i]/J_k*U_high[c,i,tid]
             end
         end
 
-        if LIMITOPT == 1
+        is_H_positive = true
+        for i = 1:Np
+            rhoH_i  = U_high[1,i,tid]
+            rhouH_i = U_high[2,i,tid]
+            rhovH_i = U_high[3,i,tid]
+            EH_i    = U_high[4,i,tid]
+            pH_i    = pfun(rhoH_i,rhouH_i,rhovH_i,EH_i)
+            if pH_i < POSTOL || rhoH_i < POSTOL
+                is_H_positive = false
+            end
+        end
+
+        if POSDETECT == 0
+            is_H_positive = false
+        end
+       
+       if !is_H_positive
+            if LIMITOPT == 1 #&& indicator[k]
+                # Calculate limiting parameters
+                for j = 2:Np
+                    for i = 1:j-1
+                        # if i < 12
+                        #     coeff_i = dt*12*Minv[i,i]/J_k # 12 - node on edge
+                        # else
+                        #     coeff_i = dt*6*Minv[i,i]/J_k # 6 - node on interior
+                        # end
+                        # if i < 12
+                        #     coeff_j = dt*12*Minv[j,j]/J_k # 12 - node on edge
+                        # else
+                        #     coeff_j = dt*6*Minv[j,j]/J_k # 6 - node on interior
+                        # end
+
+                        coeff_i = dt*(Np-1)*Minv[i,i]/J_k
+                        coeff_j = dt*(Np-1)*Minv[j,j]/J_k
+                        rhoi  = U_low[1,i,tid]
+                        rhoui = U_low[2,i,tid]
+                        rhovi = U_low[3,i,tid]
+                        Ei    = U_low[4,i,tid]
+                        rhoj  = U_low[1,j,tid]
+                        rhouj = U_low[2,j,tid]
+                        rhovj = U_low[3,j,tid]
+                        Ej    = U_low[4,j,tid]
+                        rhoP  = (F_low[1,i,j,tid]-F_high[1,i,j,tid])
+                        rhouP = (F_low[2,i,j,tid]-F_high[2,i,j,tid])
+                        rhovP = (F_low[3,i,j,tid]-F_high[3,i,j,tid])
+                        EP    = (F_low[4,i,j,tid]-F_high[4,i,j,tid])
+                        rhoP_i  = coeff_i*rhoP  
+                        rhouP_i = coeff_i*rhouP 
+                        rhovP_i = coeff_i*rhovP 
+                        EP_i    = coeff_i*EP    
+                        rhoP_j  = -coeff_j*rhoP  
+                        rhouP_j = -coeff_j*rhouP 
+                        rhovP_j = -coeff_j*rhovP 
+                        EP_j    = -coeff_j*EP
+                        l = min(limiting_param(rhoi,rhoui,rhovi,Ei,rhoP_i,rhouP_i,rhovP_i,EP_i),
+                                limiting_param(rhoj,rhouj,rhovj,Ej,rhoP_j,rhouP_j,rhovP_j,EP_j))
+                        L[i,j,tid] = l
+                        L[j,i,tid] = l
+                    end
+                end
+            elseif LIMITOPT == 2 #&& indicator[k]
+                for i = 1:Np
+                    rhoi  = U_low[1,i,tid]
+                    rhoui = U_low[2,i,tid]
+                    rhovi = U_low[3,i,tid]
+                    Ei    = U_low[4,i,tid]
+                    rhoP_i  = 0.0
+                    rhouP_i = 0.0
+                    rhovP_i = 0.0
+                    EP_i    = 0.0
+                    coeff   = dt*Minv[i,i]/J_k
+                    for j = 1:Np
+                        rhoP   = (F_low[1,i,j,tid]-F_high[1,i,j,tid])
+                        rhouP  = (F_low[2,i,j,tid]-F_high[2,i,j,tid])
+                        rhovP  = (F_low[3,i,j,tid]-F_high[3,i,j,tid])
+                        EP     = (F_low[4,i,j,tid]-F_high[4,i,j,tid])
+                        rhoP_i  = rhoP_i  + coeff*rhoP 
+                        rhouP_i = rhouP_i + coeff*rhouP 
+                        rhovP_i = rhovP_i + coeff*rhovP 
+                        EP_i    = EP_i    + coeff*EP 
+                    end
+                    l = limiting_param(rhoi,rhoui,rhovi,Ei,rhoP_i,rhouP_i,rhovP_i,EP_i)
+                    for j = 1:Np
+                        L[i,j,tid] = l
+                    end
+                end
+            end
+       end
+
+        # Elementwise limiting
+        l_e = 1.0
+        # for i = 1:S_nnz_hv
+        for j = 1:Np
+            for i = 1:Np
+                l_e = min(l_e,L[i,j,tid])
+            end
+        end
+        l_em1 = l_e-1.0
+        
+        if is_H_positive
+            l_e = 1.0
+            l_em1 = 0.0
+        end
+
+        # if !indicator[k]
+        #     l_e = 1.0
+        #     l_em1 = 0.0
+        # end
+
+        if in_s1
+            L_plot[k] = l_e
+        end
+
+
+        #=
+        # TODO: question: default convex coeff gives < 1 limiting param at T ~ 0.16, k == 1
+        if k == 2 && L_plot[1] < 1
             # Calculate limiting parameters
             for j = 2:Np
                 for i = 1:j-1
@@ -777,50 +942,75 @@ function rhs_Limited!(U,rhsU,dt,prealloc,ops,geom,in_s1)
                     EP_j    = -coeff_j*EP
                     l = min(limiting_param(rhoi,rhoui,rhovi,Ei,rhoP_i,rhouP_i,rhovP_i,EP_i),
                             limiting_param(rhoj,rhouj,rhovj,Ej,rhoP_j,rhouP_j,rhovP_j,EP_j))
-                    L[i,j,tid] = l
-                    L[j,i,tid] = l
+                    # if i == 4 && j == 12 && l < 1 && in_s1
+                    if l < 1
+                        @show i,j,l
+                        @show rhoi,rhoui,rhovi,Ei,rhoP_i,rhouP_i,rhovP_i,EP_i
+                        @show rhoj,rhouj,rhovj,Ej,rhoP_j,rhouP_j,rhovP_j,EP_j
+                        rhoP  = (F_low[1,i,j,tid]-F_high[1,i,j,tid])
+                        rhouP = (F_low[2,i,j,tid]-F_high[2,i,j,tid])
+                        rhovP = (F_low[3,i,j,tid]-F_high[3,i,j,tid])
+                        EP    = (F_low[4,i,j,tid]-F_high[4,i,j,tid])
+
+                        @show rhoP,rhouP,rhovP,EP
+                        @show rhoi+rhoP_i
+                        @show pfun(rhoi+rhoP_i,rhoui+rhouP_i,rhovi+rhovP_i,Ei+EP_i)
+                        @show F_low[1,i,j,tid],F_high[1,i,j,tid]
+                    end
+
+                    # if i == 4 && j == 13 && in_s1
+                    #     @show i,j,l
+                    #     @show rhoi,rhoui,rhovi,Ei,rhoP_i,rhouP_i,rhovP_i,EP_i
+                    #     @show rhoj,rhouj,rhovj,Ej,rhoP_j,rhouP_j,rhovP_j,EP_j
+                    #     @show U[1,:,1]
+                    #     @show U[2,:,1]
+                    #     @show U[3,:,1]
+                    #     @show U[4,:,1]
+
+                    # end
+
+                    # if i == 4 && j == 12
+                    #     @show l
+                    #     @show rhoi,rhoui,rhovi,Ei,rhoP_i,rhouP_i,rhovP_i,EP_i
+                    # end
+                    # if i == 3 && j == 12
+                    #     @show l
+                    #     @show rhoi,rhoui,rhovi,Ei,rhoP_i,rhouP_i,rhovP_i,EP_i
+                    # end
                 end
             end
-        elseif LIMITOPT == 2
-            for i = 1:Np
-                rhoi  = U_low[1,i,tid]
-                rhoui = U_low[2,i,tid]
-                rhovi = U_low[3,i,tid]
-                Ei    = U_low[4,i,tid]
-                rhoP_i  = 0.0
-                rhouP_i = 0.0
-                rhovP_i = 0.0
-                EP_i    = 0.0
-                coeff   = dt*Minv[i,i]/J_k
-                for j = 1:Np
-                    rhoP   = (F_low[1,i,j,tid]-F_high[1,i,j,tid])
-                    rhouP  = (F_low[2,i,j,tid]-F_high[2,i,j,tid])
-                    rhovP  = (F_low[3,i,j,tid]-F_high[3,i,j,tid])
-                    EP     = (F_low[4,i,j,tid]-F_high[4,i,j,tid])
-                    rhoP_i  = rhoP_i  + coeff*rhoP 
-                    rhouP_i = rhouP_i + coeff*rhouP 
-                    rhovP_i = rhovP_i + coeff*rhovP 
-                    EP_i    = EP_i    + coeff*EP 
-                end
-                l = limiting_param(rhoi,rhoui,rhovi,Ei,rhoP_i,rhouP_i,rhovP_i,EP_i)
-                for j = 1:Np
-                    L[i,j,tid] = l
-                end
+        end
+        =#
+
+        #=
+        li_min = 1.0 # limiting parameter for element
+        for i = 1:Np
+            rhoi  = U_low[1,i,tid]
+            rhoui = U_low[2,i,tid]
+            rhovi = U_low[3,i,tid]
+            Ei    = U_low[4,i,tid]
+            rhoP_i  = 0.0
+            rhouP_i = 0.0
+            rhovP_i = 0.0
+            EP_i    = 0.0
+            coeff   = dt*Minv[i,i]/J_k
+            for j = 1:Np
+                rhoP   = (F_low[1,i,j,tid]-F_high[1,i,j,tid])
+                rhouP  = (F_low[2,i,j,tid]-F_high[2,i,j,tid])
+                rhovP  = (F_low[3,i,j,tid]-F_high[3,i,j,tid])
+                EP     = (F_low[4,i,j,tid]-F_high[4,i,j,tid])
+                rhoP_i  = rhoP_i  + coeff*rhoP 
+                rhouP_i = rhouP_i + coeff*rhouP 
+                rhovP_i = rhovP_i + coeff*rhovP 
+                EP_i    = EP_i    + coeff*EP 
             end
+            l = limiting_param(rhoi,rhoui,rhovi,Ei,rhoP_i,rhouP_i,rhovP_i,EP_i)
+            li_min = min(li_min,l)
         end
 
-        # Elementwise limiting
-        l_e = 1.0
-        # for i = 1:S_nnz_hv
-        for j = 1:Np
-            for i = 1:Np
-                l_e = min(l_e,L[i,j,tid])
-            end
-        end
-        l_em1 = l_e-1.0
-        if in_s1
-            L_plot[k] = l_e
-        end
+        l_e = li_min
+        l_em1 = li_min-1.0
+        =#
 
         for j = 2:Np
             for i = 1:j-1
@@ -849,6 +1039,9 @@ function rhs_Limited!(U,rhsU,dt,prealloc,ops,geom,in_s1)
             end
         end
     end
+
+    # @show minimum(L_plot)
+    # @show sum(L_plot)/K
 
     return dt
 end
@@ -1192,6 +1385,7 @@ f_y    = zeros(Float64,size(U))
 rholog  = zeros(Float64,Np,K)
 betalog = zeros(Float64,Np,K)
 U_low   = zeros(Float64,Nc,Np,NUM_THREADS)
+U_high  = zeros(Float64,Nc,Np,NUM_THREADS)
 F_low   = zeros(Float64,Nc,Np,Np,NUM_THREADS)
 F_high  = zeros(Float64,Nc,Np,Np,NUM_THREADS)
 F_P     = zeros(Float64,Nc,Nfp,NUM_THREADS)
@@ -1200,9 +1394,22 @@ L       =  ones(Float64,Np,Np,NUM_THREADS)
 λf_arr   = zeros(Float64,Nfp,K)
 dii_arr  = zeros(Float64,Np,K)
 L_plot   = zeros(Float64,K)
+U_hat    = zeros(Float64,size(U))
+indicator = zeros(Float64,K)
 
-prealloc = (f_x,f_y,rholog,betalog,U_low,F_low,F_high,F_P,L,λ_arr,λf_arr,dii_arr,L_plot)
-ops      = (Sr,Ss,S0r,S0s,Br,Bs,Minv,E)
+VDM_hat = copy(VDM)
+cnt = 0
+for i = 0:N
+    for j = 0:N-i
+        global cnt = cnt+1
+        if (j == N-i)
+            VDM_hat[:,cnt] .= 0.0 
+        end
+    end
+end
+Vq_hat = VDM_hat/VDM
+prealloc = (f_x,f_y,rholog,betalog,U_low,U_high,F_low,F_high,F_P,L,λ_arr,λf_arr,dii_arr,L_plot,U_hat,indicator)
+ops      = (Sr,Ss,S0r,S0s,Br,Bs,Minv,E,Pq,Vq,wq,Vq_hat,M)
 geom     = (mapP,Fmask,rxJ,ryJ,sxJ,syJ,J)
 
 
@@ -1227,17 +1434,17 @@ end
     fill!(dii_arr,0.0)
     # dt = min(dt0,T-t)
     dt = dt0
-    dt = rhs_Limited!(U,rhsU,dt,prealloc,ops,geom,true)
+    dt = rhs_Limited!(U,rhsU,T,dt,prealloc,ops,geom,true)
     # dt = rhs_IDP!(U,rhsU,dt,prealloc,ops,geom,true)
     # rhs_ESDG!(U,rhsU,prealloc,ops,geom)
-    dt = min(CFL*dt,T-t)
+    # dt = min(CFL*dt,T-t)
     @. resW = U + dt*rhsU
-    rhs_Limited!(resW,rhsU,dt,prealloc,ops,geom,false)
+    rhs_Limited!(resW,rhsU,T,dt,prealloc,ops,geom,false)
     # rhs_IDP!(resW,rhsU,dt,prealloc,ops,geom,false)
     # rhs_ESDG!(resW,rhsU,prealloc,ops,geom)
     @. resW = resW+dt*rhsU
     @. resW = 3/4*U+1/4*resW
-    rhs_Limited!(resW,rhsU,dt,prealloc,ops,geom,false)
+    rhs_Limited!(resW,rhsU,T,dt,prealloc,ops,geom,false)
     # rhs_IDP!(resW,rhsU,dt,prealloc,ops,geom,false)
     # rhs_ESDG!(resW,rhsU,prealloc,ops,geom)
     @. resW = resW+dt*rhsU
@@ -1319,7 +1526,7 @@ L2err = sqrt(sum(J*M.*abs.(exact_rho-rho).^2))/sqrt(sum(J*M.*abs.(exact_rho).^2)
         sqrt(sum(J*M.*abs.(exact_rhov-rhov).^2))/sqrt(sum(J*M.*abs.(exact_rhov).^2)) +
         sqrt(sum(J*M.*abs.(exact_E-E).^2))/sqrt(sum(J*M.*abs.(exact_E).^2))
 
-println("N = $N, K = $K")
+println("convtri, N = $N, K = $K")
 println("L1 error is $L1err")
 println("L2 error is $L2err")
 println("Linf error is $Linferr")
