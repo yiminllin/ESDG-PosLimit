@@ -247,7 +247,7 @@ end
     tau_vec_x = nx*tau_xx+ny*tau_yx
     tau_vec_y = nx*tau_xy+ny*tau_yy
 
-    return abs(v_vec)+1/(2*rho^2*e)*(sqrt(rho^2*q_vec^2+2*rho^2*e*((tau_vec_x-p*nx)^2+(tau_vec_y-p*ny)^2))+rho*abs(q_vec))
+    return abs(v_vec)+1/(2*rho^2*e)*(sqrt(rho^2*q_vec^2+2*rho^2*e*((tau_vec_x-p*nx)^2+(tau_vec_y-p*ny)^2))+rho*abs(q_vec))+POSTOL
 end
 
 # TODO: previous implementation of Kvisc 
@@ -327,8 +327,9 @@ end
            K22_22,K22_24,K22_33,K22_34,K22_44
 end
 
+const LIMITOPT = 1 # 1 if elementwise limiting lij, 2 if elementwise limiting li, 3 if nodewise
 const TOL = 5e-16
-const POSTOL = 1e-14
+const POSTOL = 1e-10
 const WALLPT = 1.0/6.0
 const Nc = 4 # number of components
 "Approximation parameters"
@@ -336,12 +337,13 @@ const N = 3
 const K1D = 250
 const T = 0.2
 # const dt0 = 1e-5
-const dt0 = 0.2
+const Re = 500
+const dt0 = min(.5/N/(N-1)/K1D,0.001*Re/K1D^2)#0.2
+# dt0 = 1e+1
 const XLENGTH = 7.0/2.0
-const CFL = 0.75
+const CFL = 0.75#0.95
 
 # Viscous parameters
-const Re = 500
 const mu = 1/Re
 const lambda = 2/3*mu
 const Pr = 3/4
@@ -778,7 +780,7 @@ end
 end
 
 function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
-    f_x,f_y,VU,sigma_x,sigma_y,rholog,betalog,U_low,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr = prealloc
+    f_x,f_y,VU,sigma_x,sigma_y,rholog,betalog,U_low,U_high,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr = prealloc
     S0xJ_vec,S0yJ_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,SxJ_db_vec,SyJ_db_vec,Sr_nnzi,Sr_nnzj,Ss_nnzi,Ss_nnzj,SxJ_vec,SyJ_vec,MJ_inv,BrJ_halved,BsJ_halved,coeff_arr,S_nnzi,S_nnzj = ops
     mapP,Fmask,x,y = geom
 
@@ -792,6 +794,14 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
             rhov = U[3,i,k]
             E    = U[4,i,k]
             p           = pfun(rho,rhou,rhov,E)
+            if p < 0.0 || rho < 0.0
+                @show " ========= "
+                @show i,k 
+                @show p, rho
+                @show x[i,k],y[i,k]
+                throw(error("negative pressure/density"))
+                break
+            end
             v1,v2,v3,v4 = entropyvar(rho,rhou,rhov,E,p)
             f_x[1,i,k]  = rhou
             f_x[2,i,k]  = rhou^2/rho+p
@@ -1014,6 +1024,8 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
                 dt = min(dt,1.0/MJ_inv[i]/2.0/dii_arr[i,k])
             end
         end
+        dt= min(CFL*dt,T-t)
+        dt = 8e-7
     end
 
     # =====================
@@ -1023,7 +1035,8 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
         tid = Threads.threadid()
         for i = 1:Np
             for c = 1:Nc
-                U_low[c,i,tid] = 0.0
+                U_low[c,i,tid]  = 0.0
+                U_high[c,i,tid] = 0.0
             end
         end
 
@@ -1072,6 +1085,14 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
             EM    = U[4,iM,k]
             uM    = rhouM/rhoM
             vM    = rhovM/rhoM
+            if rhoM < 1e-6
+                @show "==== !!! ===="
+                @show "small rhoM in interface flux"
+                @show i,k
+                @show rhoM
+                # uM = 0.0
+                # vM = 0.0
+            end
             fx_1_M = f_x[1,iM,k]
             fx_2_M = f_x[2,iM,k]
             fx_3_M = f_x[3,iM,k]
@@ -1122,7 +1143,8 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
         for j = 1:Np
             for i = 1:Np
                 for c = 1:Nc
-                    U_low[c,i,tid] = U_low[c,i,tid] + F_low[c,i,j,tid]
+                    U_low[c,i,tid]  = U_low[c,i,tid]  + F_low[c,i,j,tid]
+                    U_high[c,i,tid] = U_high[c,i,tid] + F_high[c,i,j,tid]
                 end
             end
         end
@@ -1130,45 +1152,220 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
         for i = 1:Nfp
             iM = Fmask[i]
             for c = 1:Nc
-                U_low[c,iM,tid] = U_low[c,iM,tid] + F_P[c,i,tid]
+                U_low[c,iM,tid]  = U_low[c,iM,tid]  + F_P[c,i,tid]
+                U_high[c,iM,tid] = U_high[c,iM,tid] + F_P[c,i,tid]
             end
         end
 
         for i = 1:Np
             for c = 1:Nc
-                U_low[c,i,tid] = U[c,i,k] - dt*MJ_inv[i]*U_low[c,i,tid]
+                U_low[c,i,tid]  = U[c,i,k] - dt*MJ_inv[i]*U_low[c,i,tid]
+                U_high[c,i,tid] = U[c,i,k] - dt*MJ_inv[i]*U_high[c,i,tid]
+            end
+        end
+        # if k == 207
+        #     idx = 3
+        #     @show "===== DEBUG ===="
+        #     @show idx,k
+        #     @show x[idx,k],y[idx,k]
+        #     @show U[1,idx,k]
+        #     @show U[2,idx,k]
+        #     @show U[3,idx,k]
+        #     @show U[4,idx,k]
+        #     @show pfun(U[1,idx,k],U[2,idx,k],U[3,idx,k],U[4,idx,k])
+        #     @show U_low[1,idx,tid]
+        #     @show U_low[2,idx,tid]
+        #     @show U_low[3,idx,tid]
+        #     @show U_low[4,idx,tid]
+        #     @show pfun(U_low[1,idx,tid],U_low[2,idx,tid],U_low[3,idx,tid],U_low[4,idx,tid])
+        #     @show U_high[1,idx,tid]
+        #     @show U_high[2,idx,tid]
+        #     @show U_high[3,idx,tid]
+        #     @show U_high[4,idx,tid]
+        #     @show pfun(U_high[1,idx,tid],U_high[2,idx,tid],U_high[3,idx,tid],U_high[4,idx,tid])
+        #     @show F_P[:,3,tid]
+        #     @show F_P[:,4,tid]
+        # end
+
+        is_H_positive = true
+        # for i = 1:Np
+        #     rhoH_i  = U_high[1,i,tid]
+        #     rhouH_i = U_high[2,i,tid]
+        #     rhovH_i = U_high[3,i,tid]
+        #     EH_i    = U_high[4,i,tid]
+        #     pH_i    = pfun(rhoH_i,rhouH_i,rhovH_i,EH_i)
+        #     if pH_i < POSTOL || rhoH_i < POSTOL
+        #         is_H_positive = false
+        #     end
+        #     # if k == 108 && i == 13
+        #     #     @show "============="
+        #     #     @show k,i
+        #     #     @show is_H_positive
+        #     #     @show pH_i, rhoH_i
+        #     # end
+        #     # if k == 108
+        #     #     @show k,i
+        #     #     @show is_H_positive
+        #     #     @show pH_i, rhoH_i
+        #     #     # @show U_low[1,i,tid],pfun(U_low[1,i,tid], U_low[2,i,tid], U_low[3,i,tid], U_low[4,i,tid])
+        #     # end
+        # end
+
+        if k < K1D*XLENGTH
+            is_H_positive = false
+        end
+
+        # if k > K-K1D*XLENGTH
+        #     is_H_positive = false
+        # end
+        # is_H_positive = false
+
+        if !is_H_positive
+            # Calculate limiting parameters
+            for ni = 1:S_nnz_hv
+                i = S_nnzi[ni]
+                j = S_nnzj[ni]
+                coeff_i = dt*coeff_arr[i]
+                coeff_j = dt*coeff_arr[j]
+                rhoi  = U_low[1,i,tid]
+                rhoui = U_low[2,i,tid]
+                rhovi = U_low[3,i,tid]
+                Ei    = U_low[4,i,tid]
+                rhoj  = U_low[1,j,tid]
+                rhouj = U_low[2,j,tid]
+                rhovj = U_low[3,j,tid]
+                Ej    = U_low[4,j,tid]
+                rhoP  = (F_low[1,i,j,tid]-F_high[1,i,j,tid])
+                rhouP = (F_low[2,i,j,tid]-F_high[2,i,j,tid])
+                rhovP = (F_low[3,i,j,tid]-F_high[3,i,j,tid])
+                EP    = (F_low[4,i,j,tid]-F_high[4,i,j,tid])
+                rhoP_i  = coeff_i*rhoP  
+                rhouP_i = coeff_i*rhouP 
+                rhovP_i = coeff_i*rhovP 
+                EP_i    = coeff_i*EP    
+                rhoP_j  = -coeff_j*rhoP  
+                rhouP_j = -coeff_j*rhouP 
+                rhovP_j = -coeff_j*rhovP 
+                EP_j    = -coeff_j*EP
+                L[ni,tid] = min(limiting_param(rhoi,rhoui,rhovi,Ei,rhoP_i,rhouP_i,rhovP_i,EP_i),
+                                limiting_param(rhoj,rhouj,rhovj,Ej,rhoP_j,rhouP_j,rhovP_j,EP_j))
+            end
+        else
+            li_min = 1.0 # limiting parameter for element
+            for i = 1:Np
+                rhoi  = U_low[1,i,tid]
+                rhoui = U_low[2,i,tid]
+                rhovi = U_low[3,i,tid]
+                Ei    = U_low[4,i,tid]
+                rhoP_i  = 0.0
+                rhouP_i = 0.0
+                rhovP_i = 0.0
+                EP_i    = 0.0
+                coeff   = dt*MJ_inv[i]
+                for j = 1:Np
+                    rhoP   = (F_low[1,i,j,tid]-F_high[1,i,j,tid])
+                    rhouP  = (F_low[2,i,j,tid]-F_high[2,i,j,tid])
+                    rhovP  = (F_low[3,i,j,tid]-F_high[3,i,j,tid])
+                    EP     = (F_low[4,i,j,tid]-F_high[4,i,j,tid])
+                    rhoP_i  = rhoP_i  + coeff*rhoP 
+                    rhouP_i = rhouP_i + coeff*rhouP 
+                    rhovP_i = rhovP_i + coeff*rhovP 
+                    EP_i    = EP_i    + coeff*EP 
+                end
+                l = limiting_param(rhoi,rhoui,rhovi,Ei,rhoP_i,rhouP_i,rhovP_i,EP_i)
+                li_min = min(li_min,l)
+                # if i == 1 && k == 48
+                #     @show li_min
+                #     @show rhoi
+                #     @show rhoi+rhoP_i
+                #     @show pfun(rhoi+rhoP_i,rhoui+rhouP_i,rhovi+rhovP_i,Ei+EP_i)
+                #     @show rhoi+li_min*rhoP_i
+                #     @show rhoi+0.03463032575446334*rhoP_i
+                #     @show pfun(rhoi+li_min*rhoP_i,rhoui+li_min*rhouP_i,rhovi+li_min*rhovP_i,Ei+li_min*EP_i)
+                # end
+            end
+
+            for ni = 1:S_nnz_hv
+                L[ni,tid] = li_min
             end
         end
 
-        # Calculate limiting parameters
-        for ni = 1:S_nnz_hv
-            i = S_nnzi[ni]
-            j = S_nnzj[ni]
-            coeff_i = dt*coeff_arr[i]
-            coeff_j = dt*coeff_arr[j]
-            rhoi  = U_low[1,i,tid]
-            rhoui = U_low[2,i,tid]
-            rhovi = U_low[3,i,tid]
-            Ei    = U_low[4,i,tid]
-            rhoj  = U_low[1,j,tid]
-            rhouj = U_low[2,j,tid]
-            rhovj = U_low[3,j,tid]
-            Ej    = U_low[4,j,tid]
-            rhoP  = (F_low[1,i,j,tid]-F_high[1,i,j,tid])
-            rhouP = (F_low[2,i,j,tid]-F_high[2,i,j,tid])
-            rhovP = (F_low[3,i,j,tid]-F_high[3,i,j,tid])
-            EP    = (F_low[4,i,j,tid]-F_high[4,i,j,tid])
-            rhoP_i  = coeff_i*rhoP  
-            rhouP_i = coeff_i*rhouP 
-            rhovP_i = coeff_i*rhovP 
-            EP_i    = coeff_i*EP    
-            rhoP_j  = -coeff_j*rhoP  
-            rhouP_j = -coeff_j*rhouP 
-            rhovP_j = -coeff_j*rhovP 
-            EP_j    = -coeff_j*EP
-            L[ni,tid] = min(limiting_param(rhoi,rhoui,rhovi,Ei,rhoP_i,rhouP_i,rhovP_i,EP_i),
-                            limiting_param(rhoj,rhouj,rhovj,Ej,rhoP_j,rhouP_j,rhovP_j,EP_j))
-        end
+        # # Elementwise limiting
+        # l_e = 1.0
+        # for i = 1:S_nnz_hv
+        #     l_e = min(l_e,L[i,tid])
+        # end
+        # l_em1 = l_e-1.0
+
+        # if ((LIMITOPT == 1) || (LIMITOPT == 3)) && !is_H_positive
+        #     # Calculate limiting parameters
+        #     for ni = 1:S_nnz_hv
+        #         i = S_nnzi[ni]
+        #         j = S_nnzj[ni]
+        #         coeff_i = dt*coeff_arr[i]
+        #         coeff_j = dt*coeff_arr[j]
+        #         rhoi  = U_low[1,i,tid]
+        #         rhoui = U_low[2,i,tid]
+        #         rhovi = U_low[3,i,tid]
+        #         Ei    = U_low[4,i,tid]
+        #         rhoj  = U_low[1,j,tid]
+        #         rhouj = U_low[2,j,tid]
+        #         rhovj = U_low[3,j,tid]
+        #         Ej    = U_low[4,j,tid]
+        #         rhoP  = (F_low[1,i,j,tid]-F_high[1,i,j,tid])
+        #         rhouP = (F_low[2,i,j,tid]-F_high[2,i,j,tid])
+        #         rhovP = (F_low[3,i,j,tid]-F_high[3,i,j,tid])
+        #         EP    = (F_low[4,i,j,tid]-F_high[4,i,j,tid])
+        #         rhoP_i  = coeff_i*rhoP  
+        #         rhouP_i = coeff_i*rhouP 
+        #         rhovP_i = coeff_i*rhovP 
+        #         EP_i    = coeff_i*EP    
+        #         rhoP_j  = -coeff_j*rhoP  
+        #         rhouP_j = -coeff_j*rhouP 
+        #         rhovP_j = -coeff_j*rhovP 
+        #         EP_j    = -coeff_j*EP
+        #         L[ni,tid] = min(limiting_param(rhoi,rhoui,rhovi,Ei,rhoP_i,rhouP_i,rhovP_i,EP_i),
+        #                         limiting_param(rhoj,rhouj,rhovj,Ej,rhoP_j,rhouP_j,rhovP_j,EP_j))
+        #     end
+        # elseif (LIMITOPT == 2) && !is_H_positive
+        #     li_min = 1.0 # limiting parameter for element
+        #     for i = 1:Np
+        #         rhoi  = U_low[1,i,tid]
+        #         rhoui = U_low[2,i,tid]
+        #         rhovi = U_low[3,i,tid]
+        #         Ei    = U_low[4,i,tid]
+        #         rhoP_i  = 0.0
+        #         rhouP_i = 0.0
+        #         rhovP_i = 0.0
+        #         EP_i    = 0.0
+        #         coeff   = dt*MJ_inv[i]
+        #         for j = 1:Np
+        #             rhoP   = (F_low[1,i,j,tid]-F_high[1,i,j,tid])
+        #             rhouP  = (F_low[2,i,j,tid]-F_high[2,i,j,tid])
+        #             rhovP  = (F_low[3,i,j,tid]-F_high[3,i,j,tid])
+        #             EP     = (F_low[4,i,j,tid]-F_high[4,i,j,tid])
+        #             rhoP_i  = rhoP_i  + coeff*rhoP 
+        #             rhouP_i = rhouP_i + coeff*rhouP 
+        #             rhovP_i = rhovP_i + coeff*rhovP 
+        #             EP_i    = EP_i    + coeff*EP 
+        #         end
+        #         l = limiting_param(rhoi,rhoui,rhovi,Ei,rhoP_i,rhouP_i,rhovP_i,EP_i)
+        #         li_min = min(li_min,l)
+        #         # if i == 1 && k == 48
+        #         #     @show li_min
+        #         #     @show rhoi
+        #         #     @show rhoi+rhoP_i
+        #         #     @show pfun(rhoi+rhoP_i,rhoui+rhouP_i,rhovi+rhovP_i,Ei+EP_i)
+        #         #     @show rhoi+li_min*rhoP_i
+        #         #     @show rhoi+0.03463032575446334*rhoP_i
+        #         #     @show pfun(rhoi+li_min*rhoP_i,rhoui+li_min*rhouP_i,rhovi+li_min*rhovP_i,Ei+li_min*EP_i)
+        #         # end
+        #     end
+
+        #     for ni = 1:S_nnz_hv
+        #         L[ni,tid] = li_min
+        #     end
+        # end
 
         # Elementwise limiting
         l_e = 1.0
@@ -1177,12 +1374,21 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
         end
         l_em1 = l_e-1.0
 
+        # if is_H_positive
+        #     l_e = 1.0
+        #     l_em1 = 0.0
+        # end
+
         for ni = 1:S_nnz_hv
             i     = S_nnzi[ni]
             j     = S_nnzj[ni]
             for c = 1:Nc
                 FL_ij = F_low[c,i,j,tid]
                 FH_ij = F_high[c,i,j,tid]
+                # if (LIMITOPT == 3)
+                #     l_e   = L[ni,tid]
+                #     l_em1 = L[ni,tid]-1.0 
+                # end
                 rhsU[c,i,k] = rhsU[c,i,k] + l_em1*FL_ij - l_e*FH_ij
                 rhsU[c,j,k] = rhsU[c,j,k] - l_em1*FL_ij + l_e*FH_ij
                 # l_e   = L[ni,tid]
@@ -1209,6 +1415,16 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
             end
         end
     end
+
+    # @show "min density"
+    # @show minimum(U[1,:,:])
+    # @show maximum(U[1,:,:])
+    # @show minimum(U[2,:,:])
+    # @show maximum(U[2,:,:])
+    # @show minimum(U[3,:,:])
+    # @show maximum(U[3,:,:])
+    # @show minimum(U[4,:,:])
+    # @show maximum(U[4,:,:])
 
     return dt
 end
@@ -1349,6 +1565,7 @@ for k = 1:K
 end
 
 # Preallocation
+prevU  = zeros(Float64,size(U))
 rhsU   = zeros(Float64,size(U))
 f_x    = zeros(Float64,size(U))
 f_y    = zeros(Float64,size(U))
@@ -1358,6 +1575,7 @@ VU      = zeros(Float64,Nc,Np,K)
 rholog  = zeros(Float64,Np,K)
 betalog = zeros(Float64,Np,K)
 U_low   = zeros(Float64,Nc,Np,NUM_THREADS)
+U_high  = zeros(Float64,Nc,Np,NUM_THREADS)
 F_low   = zeros(Float64,Nc,Np,Np,NUM_THREADS)
 F_high  = zeros(Float64,Nc,Np,Np,NUM_THREADS)
 F_P     = zeros(Float64,Nc,Nfp,NUM_THREADS)
@@ -1367,7 +1585,7 @@ wspd_arr = zeros(Float64,Np,2,K)
 λf_arr   = zeros(Float64,Nfp,K)
 dii_arr  = zeros(Float64,Np,K)
 
-prealloc = (f_x,f_y,VU,sigma_x,sigma_y,rholog,betalog,U_low,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr)
+prealloc = (f_x,f_y,VU,sigma_x,sigma_y,rholog,betalog,U_low,U_high,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr)
 ops      = (S0xJ_vec,  S0yJ_vec,  S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,
             SxJ_db_vec,SyJ_db_vec,Sr_nnzi, Sr_nnzj, Ss_nnzi, Ss_nnzj,
             SxJ_vec,   SyJ_vec,
@@ -1403,8 +1621,9 @@ mapN = collect(reshape(1:Np*K,Np,K))
 inflow_nodal = mapN[findall(@. (abs(x) < TOL) | ((x < WALLPT) & (abs(y) < TOL)))]
 outflow_nodal = mapN[findall(@. abs(x-XLENGTH) < TOL)]
 topflow_nodal = mapN[findall(@. abs(y-1.) < TOL)]
+wall_nodal = mapN[findall(@. ((x >= WALLPT) & (abs(y) < TOL)))]
 
-@inline function enforce_BC_timestep!(U,inflow_nodal,topflow_nodal,t)
+@inline function enforce_BC_timestep!(U,inflow_nodal,topflow_nodal,wall_nodal,t)
     for i = inflow_nodal
         k = fld1(i,Np)
         j = mod1(i,Np)
@@ -1437,6 +1656,11 @@ topflow_nodal = mapN[findall(@. abs(y-1.) < TOL)]
             U[4,j,k] = ER
         end
     end
+    # for i = wall_nodal
+    #     k = fld1(i,Np)
+    #     j = mod1(i,Np)
+    #     U[3,j,k] = 0.0
+    # end
 end
 
 open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,x,dmr.txt","w") do io
@@ -1446,34 +1670,38 @@ open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,y,dmr.txt","w") do io
     writedlm(io,y)
 end
 
+#=
 # t=0.14133073085796596
-# rho = readdlm("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rho,dmr.txt")
-# rhou = readdlm("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhou,dmr.txt")
-# rhov = readdlm("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhov,dmr.txt")
-# E = readdlm("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,E,dmr.txt")
-# U[1,:,:] = rho
-# U[2,:,:] = rhou
-# U[3,:,:] = rhov
-# U[4,:,:] = E
-# for k = 1:K 
-#     for i = 1:Np
-#         if x[i,k] > 3.3
-#             U[1,i,k] = rhoR
-#             U[2,i,k] = rhouR
-#             U[3,i,k] = rhovR
-#             U[4,i,k] = ER
-#         end
-#     end
-# end
+t=0.0016657198843193818
+t=0.020095078690380845
+t=0.019838639399056845
+rho = readdlm("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rho,dmr.txt")
+rhou = readdlm("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhou,dmr.txt")
+rhov = readdlm("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhov,dmr.txt")
+E = readdlm("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,E,dmr.txt")
+U[1,:,:] = rho
+U[2,:,:] = rhou
+U[3,:,:] = rhov
+U[4,:,:] = E
+for k = 1:K 
+    for i = 1:Np
+        if x[i,k] > 3.3
+            U[1,i,k] = rhoR
+            U[2,i,k] = rhouR
+            U[3,i,k] = rhovR
+            U[4,i,k] = ER
+        end
+    end
+end
+=#
 
 @time while t < T
 #while i < 2
     # SSPRK(3,3)
     fill!(dii_arr,0.0)
-    # dt = min(dt0,T-t)
-    dt = dt0
+    dt = min(CFL*dt0,T-t)
+    
     dt = rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,true);
-    dt = min(CFL*dt,T-t)
     @. resW = U + dt*rhsU
     rhs_IDP!(resW,rhsU,t+dt,dt,prealloc,ops,geom,false);
     @. resW = resW+dt*rhsU
@@ -1481,7 +1709,7 @@ end
     rhs_IDP!(resW,rhsU,t+dt/2,dt,prealloc,ops,geom,false);
     @. resW = resW+dt*rhsU
     @. U = 1/3*U+2/3*resW
-    enforce_BC_timestep!(U,inflow_nodal,topflow_nodal,t+dt);
+    enforce_BC_timestep!(U,inflow_nodal,topflow_nodal,wall_nodal,t+dt);
 
     push!(dt_hist,dt)
     global t = t + dt
@@ -1492,7 +1720,7 @@ end
     # if ((mod(i,100) == 1) | (i >= 55))
     # @show U[1,:,351]
     # @show sigma_x[1,:,351]
-    if (mod(i,100) == 1)
+    if (mod(i,500) == 1)
     # if i >= 480
         open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rho,dmr.txt","w") do io
             writedlm(io,U[1,:,:])
