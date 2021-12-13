@@ -1,9 +1,9 @@
 using DelimitedFiles
 
-filename = "./log-conv-euler-1D-CFL.5"
+filename = "./log-conv-euler-1D-nodewise_CFL.5"
 file = readdlm(filename)
 
-num_scheme = 2
+num_scheme = 1#2
 Narr = [2;5]
 Karr = [50;100;200;400;800]
 block_size = 4
@@ -25,7 +25,7 @@ for b in 1:num_block
 end
 
 num_row = length(Karr)-1
-num_col = 2*length(Narr)
+num_col = num_scheme*length(Narr)
 conv_table = zeros(num_row,num_col)
 for i = 1:num_row
     for j = 1:num_col

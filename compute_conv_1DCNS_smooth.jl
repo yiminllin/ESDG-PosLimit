@@ -1,6 +1,6 @@
 using DelimitedFiles
 
-filename = "./log-conv-CNS-1D-smooth-CFL.5"
+filename = "./log-conv-CNS-1D-smooth-nodewise_CFL.5"
 file = readdlm(filename)
 
 num_scheme = 1
