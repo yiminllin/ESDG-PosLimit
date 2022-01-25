@@ -34,7 +34,9 @@ const betaR = rhoR/(2*pR)
 
 N = 3
 K1D = 250
-t=0.2
+# N = 2
+# K1D = 50
+t = 0.2
 CFL = 0.75
 XLENGTH = 7/2
 Np = (N+1)*(N+1)

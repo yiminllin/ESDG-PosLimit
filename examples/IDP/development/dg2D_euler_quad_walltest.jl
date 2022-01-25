@@ -195,7 +195,6 @@ end
 const LIMITOPT = 1 # 1 if elementwise limiting lij, 2 if elementwise limiting li, 3 if nodewise
 const TOL = 5e-16
 const POSTOL = 1e-10
-const WALLPT = 1.0/6.0
 const Nc = 4 # number of components
 "Approximation parameters"
 const N = 3
@@ -204,10 +203,12 @@ const T = 0.2
 const dt0 = 1e-2
 const XLENGTH = 1.0
 const CFL = 0.75#0.5
+
 const NUM_THREADS = Threads.nthreads()
 const BOTTOMRIGHT = N+1
 const TOPRIGHT    = 2*(N+1)
 const TOPLEFT     = 3*(N+1)
+const WALLPT = 1.0/6.0
 
 # Initial condition 2D shocktube
 const γ = 1.4
@@ -550,7 +551,7 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
                 if (!has_bc)
                     λP = wspd_arr[iP,1,kP]
                 else
-                    λP = 0.0#wavespeed_1D(rhoP,rhouP,EP)
+                    λP = wavespeed_1D(rhoP,rhouP,EP)
                 end
                 λf = max(λM,λP)*BrJ_ii_halved_abs
                 λf_arr[i,k] = λf
@@ -564,7 +565,7 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
                 if (!has_bc)
                     λP = wspd_arr[iP,2,kP]
                 else
-                    λP = 0.0#wavespeed_1D(rhoP,rhovP,EP)
+                    λP = wavespeed_1D(rhoP,rhovP,EP)
                 end
                 λf = max(λM,λP)*BsJ_ii_halved_abs
                 λf_arr[i,k] = λf
@@ -714,7 +715,6 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
                 is_H_positive = false
             end
         end
-        is_H_positive = false
 
         if ((LIMITOPT == 1) || (LIMITOPT == 3)) && !is_H_positive
             # Calculate limiting parameters
@@ -800,10 +800,10 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
             for c = 1:Nc
                 FL_ij = F_low[c,i,j,tid]
                 FH_ij = F_high[c,i,j,tid]
-                # if (LIMITOPT == 3)
-                #     l_e   = L[ni,tid]
-                #     l_em1 = L[ni,tid]-1.0 
-                # end
+                if (LIMITOPT == 3)
+                    l_e   = L[ni,tid]
+                    l_em1 = L[ni,tid]-1.0 
+                end
                 rhsU[c,i,k] = rhsU[c,i,k] + l_em1*FL_ij - l_e*FH_ij
                 rhsU[c,j,k] = rhsU[c,j,k] - l_em1*FL_ij + l_e*FH_ij
             end
