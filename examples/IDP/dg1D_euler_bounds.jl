@@ -34,15 +34,18 @@ T = 0.2
 is_low_order = false
 const CASENUM = 2                 # 1 - standard case, 2 - smooth convergence
 # 0 - no limit
-# 1 - Elementwise limiter wo smoothness indicator
-# 2 - Elementwise limiter with smoothness indicator
+# 1 - Zalesak limiter local bounds wo smoothness indicator
+# 2 - Zalesak limiter local bounds with smoothness indicator
 # 3 - integrated version of elementwise limiter 
-# 4 - weakest elementwise bound
+# 4 - Zalesak global bound
 # 5 - nodewise local bound (original IDP)
 # 6 - nodewise global bound 
-const RHO_LIMIT_TYPE = 6
-const S_LIMIT_TYPE = 6
-const IS_ELEMENTWISE_LIMIT = false #false
+# 7 - Subcell limiting local bound
+# 8 - Subcell limiting global bound
+const RHO_LIMIT_TYPE = 0
+const S_LIMIT_TYPE = 0
+const IS_ELEMENTWISE_LIMIT = false # false - nodewise limit
+const IS_SUBCELL_LIMIT = false
 const HIGH_ORDER_FLUX_TYPE = 2 # 1 - ES flux, 2 - central flux
 
 "Mesh related variables"
@@ -574,7 +577,7 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,T,dt,in_s1,is_low_order)
                         if (HIGH_ORDER_FLUX_TYPE == 1)
                             F_high[c][i,j] = fluxS[c]
                         elseif (HIGH_ORDER_FLUX_TYPE == 2)
-                            F_high[c][i,j] = flux_high(flux[c][i,k],flux[c][j,k],S0[i,j])
+                            F_high[c][i,j] = flux_high(flux[c][i,k],flux[c][j,k],S[i,j])
                         end
                     end
                 end
@@ -638,6 +641,21 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,T,dt,in_s1,is_low_order)
                     else
                         L[i,j] = 1.0
                     end
+                end
+            end
+        end
+
+        # sum of residual states in subcell limiting
+        rbararr = zeros(3,N+1)
+        for i = 1:N+1
+            for j = 1:N+1
+                for c = 1:3
+                    rbararr[c,i] = rbararr[c,i] + (F_low[c][i,j]-F_high[c][i,j])
+                end
+            end
+            if (i != N+1)
+                for c = 1:3
+                    rbararr[c,i+1] = rbararr[c,i]
                 end
             end
         end
@@ -739,6 +757,64 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,T,dt,in_s1,is_low_order)
                     end
                 end
             end
+            # Lrho = RHOMIN_GLOBAL
+            # Urho = RHOMAX_GLOBAL
+            # P1 = zeros(3)
+            # P2 = zeros(3)
+            # for i = 1:N+1
+            #     lambda_j = 1/2
+            #     m_i = J*wq[i]
+            #     for j = 1:N+1
+            #         if j < i
+            #             for c = 1:3
+            #                 P1[c] += dt/(m_i*lambda_j)*(F_low[c][i,j]-F_high[c][i,j])
+            #             end
+            #         end
+            #         if j > i
+            #             for c = 1:3
+            #                 P2[c] += dt/(m_i*lambda_j)*(F_low[c][i,j]-F_high[c][i,j])
+            #             end
+            #         end
+            #     end
+            #     l1 = limiting_param_rhobound(U_low[1][i],P1[1],Lrho,Urho)
+            #     l2 = limiting_param_rhobound(U_low[1][i],P2[1],Lrho,Urho)
+            #     for j = 1:N+1
+            #         Limrho[i,j] = min(l1,l2)
+            #     end
+            # end
+        elseif ((RHO_LIMIT_TYPE == 7) || (RHO_LIMIT_TYPE == 8))
+            lambda = 1/2
+            for i = 1:N+1
+                alphai = Inf
+                m_i = J*wq[i]
+                coeff = dt/(m_i*lambda)
+                
+                if (RHO_LIMIT_TYPE == 7)
+                    if i == 1
+                        Lrho = min(rhobar[i,2,k],rhobarb[1,k],U[1][i,k])
+                        Urho = max(rhobar[i,2,k],rhobarb[1,k],U[1][i,k])
+                    elseif i == N+1
+                        Lrho = min(rhobar[i,N,k],rhobarb[end,k],U[1][i,k])
+                        Urho = max(rhobar[i,N,k],rhobarb[end,k],U[1][i,k])
+                    else
+                        Lrho = min(rhobar[i,i-1,k],rhobar[i,i+1,k],U[1][i,k])
+                        Urho = max(rhobar[i,i-1,k],rhobar[i,i+1,k],U[1][i,k])
+                    end
+                elseif (RHO_LIMIT_TYPE == 8)
+                    Lrho = RHOMIN_GLOBAL
+                    Urho = RHOMAX_GLOBAL
+                end
+
+                if i > 1
+                    alphai = min(alphai,limiting_param_rhobound(U_low[1][i], coeff*rbararr[1,i-1],Lrho,Urho))
+                    alphai = min(alphai,limiting_param_rhobound(U_low[1][i],-coeff*rbararr[1,i-1],Lrho,Urho))
+                end
+                alphai = min(alphai,limiting_param_rhobound(U_low[1][i], coeff*rbararr[1,i],Lrho,Urho))
+                alphai = min(alphai,limiting_param_rhobound(U_low[1][i],-coeff*rbararr[1,i],Lrho,Urho))
+                for j = 1:N+1
+                    Limrho[i,j] = alphai
+                end
+            end
         end
 
         if (S_LIMIT_TYPE == 0)
@@ -825,59 +901,147 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,T,dt,in_s1,is_low_order)
                     end
                 end
             end
+            # Ls = SMIN_GLOBAL
+            # P1 = zeros(3)
+            # P2 = zeros(3)
+            # for i = 1:N+1
+            #     lambda_j = 1/2
+            #     m_i = J*wq[i]
+            #     for j = 1:N+1
+            #         if j < i
+            #             for c = 1:3
+            #                 P1[c] += dt/(m_i*lambda_j)*(F_low[c][i,j]-F_high[c][i,j])
+            #             end
+            #         end
+            #         if j > i
+            #             for c = 1:3
+            #                 P2[c] += dt/(m_i*lambda_j)*(F_low[c][i,j]-F_high[c][i,j])
+            #             end
+            #         end
+            #     end
+            #     l1 = limiting_param_sbound(U_low[1][i],U_low[2][i],U_low[3][i],P1[1],P1[2],P1[3],Ls)
+            #     l2 = limiting_param_sbound(U_low[1][i],U_low[2][i],U_low[3][i],P2[1],P2[2],P2[3],Ls)
+            #     for j = 1:N+1
+            #         Lims[i,j] = min(l1,l2)
+            #     end
+            # end
+        elseif ((S_LIMIT_TYPE == 7) || (S_LIMIT_TYPE == 8))
+            lambda = 1/2
+
+            for i = 1:N+1
+                alphai = Inf
+                m_i = J*wq[i]
+                coeff = dt/(m_i*lambda)
+
+                if (S_LIMIT_TYPE == 7)
+                    if i == 1
+                        Ls = min(sk[2,k],sk[end,mod1(k-1,K)],sk[i,k])
+                    elseif i == N+1
+                        Ls = min(sk[N,k],sk[1,mod1(k+1,K)],sk[i,k])
+                    else
+                        Ls = min(sk[i-1,k],sk[i+1,K],sk[i,k])
+                    end
+                elseif (S_LIMIT_TYPE == 8)
+                    Ls = SMIN_GLOBAL
+                end
+
+                if i > 1
+                    alphai = min(alphai,limiting_param_sbound(U_low[1][i],U_low[2][i],U_low[3][i], coeff*rbararr[1,i-1], coeff*rbararr[2,i-1], coeff*rbararr[3,i-1],Ls))
+                    alphai = min(alphai,limiting_param_sbound(U_low[1][i],U_low[2][i],U_low[3][i],-coeff*rbararr[1,i-1],-coeff*rbararr[2,i-1],-coeff*rbararr[3,i-1],Ls))
+                end
+                alphai = min(alphai,limiting_param_sbound(U_low[1][i],U_low[2][i],U_low[3][i], coeff*rbararr[1,i], coeff*rbararr[2,i], coeff*rbararr[3,i],Ls))
+                alphai = min(alphai,limiting_param_sbound(U_low[1][i],U_low[2][i],U_low[3][i],-coeff*rbararr[1,i],-coeff*rbararr[2,i],-coeff*rbararr[3,i],Ls))
+                for j = 1:N+1
+                    Lims[i,j] = alphai
+                end
+            end
+
         end
 
         for i = 1:N+1
             for j = 1:N+1
                 if i != j
                     L[i,j] = min(L[i,j],Limrho[i,j],Lims[i,j])
-                end
-            end
-        end
-
-        # Symmetrize limiting parameters
-        for i = 1:N+1
-            for j = 1:N+1
-                if i != j
-                    l_ij = min(L[i,j],L[j,i])
-                    L[i,j] = l_ij
-                    L[j,i] = l_ij
-                end
-            end
-        end
-
-        if (IS_ELEMENTWISE_LIMIT)
-            # elementwise limiting
-            l = 1.0
-            for i = 1:N+1
-                for j = 1:N+1
-                    if i != j
-                        l = min(l,L[i,j])
-                    end
-                end
-            end
-
-            for i = 1:N+1
-                for j = 1:N+1
-                    if i != j
-                        L[i,j] = l
-                        L[j,i] = l
+                    if is_low_order
+                        L[i,j] = 0.0
                     end
                 end
             end
         end
 
-        for i = 1:N+1
-            Lplot[i,k] = minimum(L[i,:])
-        end
+        if (IS_SUBCELL_LIMIT)
+            alphaarr = minimum(L,dims=2)
+            for i = 1:N+1
+                Lplot[i,k] = alphaarr[i]
+            end
 
-        # construct rhs
-        for c = 1:3
-            # With limiting
-            rhsU[c][:,k] = sum((L.-1).*F_low[c] - L.*F_high[c],dims=2)
-            rhsU[c][1,k] += -F_P[c][1]
-            rhsU[c][N+1,k] += -F_P[c][2]
-            rhsU[c][:,k] .= 1/J*Mlump_inv*rhsU[c][:,k]
+            for c = 1:3
+                # With limiting
+                rhsU[c][:,k] = sum(-F_low[c],dims=2)
+                rhsU[c][1,k] += -F_P[c][1]
+                rhsU[c][N+1,k] += -F_P[c][2]
+            end
+
+            for i = 1:N+1
+                for c = 1:3
+                    if (i == 1)
+                        rhsU[c][i,k] += min(alphaarr[1],alphaarr[2])*rbararr[c,1]
+                    elseif (i == N+1)
+                        rhsU[c][i,k] += alphaarr[i]*rbararr[c,i] - min(alphaarr[i-1],alphaarr[i])*rbararr[c,i-1]
+                    else
+                        rhsU[c][i,k] += min(alphaarr[i],alphaarr[i+1])*rbararr[c,i] - min(alphaarr[i-1],alphaarr[i])*rbararr[c,i-1]
+                    end
+                end
+            end
+
+            for c = 1:3
+                rhsU[c][:,k] .= 1/J*Mlump_inv*rhsU[c][:,k]
+            end
+        else
+            # Symmetrize limiting parameters
+            for i = 1:N+1
+                for j = 1:N+1
+                    if i != j
+                        l_ij = min(L[i,j],L[j,i])
+                        L[i,j] = l_ij
+                        L[j,i] = l_ij
+                    end
+                end
+            end
+
+            if (IS_ELEMENTWISE_LIMIT)
+                # elementwise limiting
+                l = 1.0
+                for i = 1:N+1
+                    for j = 1:N+1
+                        if i != j
+                            l = min(l,L[i,j])
+                        end
+                    end
+                end
+
+                for i = 1:N+1
+                    for j = 1:N+1
+                        if i != j
+                            L[i,j] = l
+                            L[j,i] = l
+                        end
+                    end
+                end
+            end
+
+            for i = 1:N+1
+                Lplot[i,k] = minimum(L[i,:])
+            end
+
+            # construct rhs
+            for c = 1:3
+                # With limiting
+                rhsU[c][:,k] = sum((L.-1).*F_low[c] - L.*F_high[c],dims=2)
+                rhsU[c][1,k] += -F_P[c][1]
+                rhsU[c][N+1,k] += -F_P[c][2]
+                rhsU[c][:,k] .= 1/J*Mlump_inv*rhsU[c][:,k]
+            end
         end
     end
 
@@ -1070,7 +1234,7 @@ end
 
 # plot(Vp*x,Vp*U[1])
 # savefig("N=$N,K=$K,T=$T,is_low_order=$is_low_order,RHO_LIMIT_TYPE=$RHO_LIMIT_TYPE,S_LIMIT_TYPE=$S_LIMIT_TYPE,HIGH_ORDER_FLUX_TYPE=$HIGH_ORDER_FLUX_TYPE,IS_ELEMENTWISE_LIMIT=$IS_ELEMENTWISE_LIMIT,bounds.png")
-gif(anim,"N=$N,K=$K,T=$T,is_low_order=$is_low_order,RHO_LIMIT_TYPE=$RHO_LIMIT_TYPE,S_LIMIT_TYPE=$S_LIMIT_TYPE,HIGH_ORDER_FLUX_TYPE=$HIGH_ORDER_FLUX_TYPE,IS_ELEMENTWISE_LIMIT=$IS_ELEMENTWISE_LIMIT,bounds.gif",fps=30)
+gif(anim,"N=$N,K=$K,T=$T,is_low_order=$is_low_order,RHO_LIMIT_TYPE=$RHO_LIMIT_TYPE,S_LIMIT_TYPE=$S_LIMIT_TYPE,HIGH_ORDER_FLUX_TYPE=$HIGH_ORDER_FLUX_TYPE,IS_ELEMENTWISE_LIMIT=$IS_ELEMENTWISE_LIMIT,IS_SUBCELL_LIMIT=$IS_SUBCELL_LIMIT,bounds.gif",fps=30)
 
 
 #=
