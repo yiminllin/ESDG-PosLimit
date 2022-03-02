@@ -6,6 +6,8 @@ using SparseArrays
 using BenchmarkTools
 using UnPack
 using DelimitedFiles
+using CSV
+using DataFrames
 
 
 push!(LOAD_PATH, "./src")
@@ -31,8 +33,10 @@ const γ = 1.4
 N = 3 # The order of approximation
 K = 50#200
 T = 0.2
-is_low_order = false
-const CASENUM = 2                 # 1 - standard case, 2 - smooth convergence
+is_low_order = true 
+const CASENUM = 2                 # 1 - standard case, 2 - smooth sine convergence, 3 - smooth sine convergence small density
+const PLOTGIF = true
+const ADDTODF = false
 # 0 - no limit
 # 1 - Zalesak limiter local bounds wo smoothness indicator
 # 2 - Zalesak limiter local bounds with smoothness indicator
@@ -42,11 +46,14 @@ const CASENUM = 2                 # 1 - standard case, 2 - smooth convergence
 # 6 - nodewise global bound 
 # 7 - Subcell limiting local bound
 # 8 - Subcell limiting global bound
+# 9 - Subcell limiting relaxed global bound
+# 10 - Zalesak relaxed glbal bound
+# 11 - Subcell limiting relaxed global bound - my version (more relaxed version) of the limiting parameter
 const RHO_LIMIT_TYPE = 0
 const S_LIMIT_TYPE = 0
 const IS_ELEMENTWISE_LIMIT = false # false - nodewise limit
 const IS_SUBCELL_LIMIT = false
-const HIGH_ORDER_FLUX_TYPE = 2 # 1 - ES flux, 2 - central flux
+const HIGH_ORDER_FLUX_TYPE = 1 # 1 - ES flux, 2 - central flux
 
 "Mesh related variables"
 VX = LinRange(-1.0,1.0,K+1)
@@ -143,6 +150,14 @@ E = @. p / (γ - 1) + 0.5 * rho * u^2
 rhou = @. rho*u
 s = sfun.(rho,rhou,E)
 U = (rho,rhou,E)
+
+function exact_sol_sine_wave(x,t)
+    rho = 2.0+sin(pi*(x-t))
+    u = 1.0
+    p = 1.0
+    E = p / (γ - 1) + 0.5 * rho * u^2
+    return rho,rho*u,E
+end
 
 if (CASENUM == 2)
     rho = @. 2.0 + sin(pi*x)
@@ -353,17 +368,27 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,T,dt,in_s1,is_low_order)
         end
     end
 
-    rhoavg = zeros(K)
-    savg   = zeros(K)
+    rhoavg  = zeros(K)
+    rhouavg = zeros(K)
+    Eavg    = zeros(K)
+    savg    = zeros(K)
+    sUavg   = zeros(K)
     for k = 1:K
-        rhoavgk = 0.0
+        rhoavgk  = 0.0
+        rhouavgk = 0.0
+        Eavgk    = 0.0
         savgk   = 0.0
         for i = 1:N+1
-            rhoavgk += J*wq[i]*U[1][i,k]
+            rhoavgk  += J*wq[i]*U[1][i,k]
+            rhouavgk += J*wq[i]*U[2][i,k]
+            Eavgk    += J*wq[i]*U[3][i,k]
             savgk   += J*wq[i]*sfun(U[1][i,k],U[2][i,k],U[3][i,k])
         end
-        rhoavg[k] = rhoavgk/(2/K)
-        savg[k]   = savgk/(2/K)
+        rhoavg[k]  = rhoavgk/(2/K)
+        rhouavg[k] = rhouavgk/(2/K)
+        Eavg[k]    = Eavgk/(2/K)
+        savg[k]    = savgk/(2/K)
+        sUavg[k]   = sfun(rhoavg[k],rhouavg[k],Eavg[k])
     end
 
     # Low order and high order algebraic fluxes
@@ -481,28 +506,83 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,T,dt,in_s1,is_low_order)
     rhoLavg = zeros(K)
     rhouLavg = zeros(K)
     ELavg = zeros(K)
-    sLavg = zeros(K)
-    sULavg = zeros(K)
+    sLavg = zeros(K)          # avg(s(u^L))
+    sULavg = zeros(K)         # s(avg(u^L))
     ULn,_ = get_U_low(U,K,N,wq,S0,Mlump_inv,T,dt,false)
     for k = 1:K
         rhoavgk = 0.0
         rhouavgk = 0.0
         Eavgk = 0.0
-        savgk = 0.0
+        savgk = 0.0        # This is \overline s(u)
+        srhoavgk = 0.0     # This is \overline \rho s(u)
         for i = 1:N+1
             rhoavgk += J*wq[i]*ULn[1][i,k]
             rhouavgk += J*wq[i]*ULn[2][i,k]
             Eavgk += J*wq[i]*ULn[3][i,k]
             savgk   += J*wq[i]*sfun(ULn[1][i,k],ULn[2][i,k],ULn[3][i,k])
+            srhoavgk   += J*wq[i]*ULn[1][i,k]*sfun(ULn[1][i,k],ULn[2][i,k],ULn[3][i,k])
         end
         rhoLavg[k] = rhoavgk/(2/K)
         rhouLavg[k] = rhouavgk/(2/K)
         ELavg[k] = Eavgk/(2/K)
         sLavg[k] = savgk/(2/K)
+        srhoavgk = srhoavgk/(2/K)
         sULavg[k] = sfun(rhoLavg[k],rhouLavg[k],ELavg[k])
         if !((rhoLavg[k] <= RHOMAX_GLOBAL + BOUNDTOL) && (rhoLavg[k] >= RHOMIN_GLOBAL - BOUNDTOL))
             @show "rhoLavg doesn't satisfy global max/min principle",rhoLavg[k]
         end
+
+        sbarLk = sfun(rhoavgk,rhouavgk,Eavgk)   # This is s (\overline u)
+        if (srhoavgk >= rhoavgk*sbarLk)    # If \overline{rho*s(u)} >= rhos(\overline{u})
+            @show "overline{rho*s(u)} >= rhos(overline{u})"
+        end
+        # if (savgk >= sbarLk)               # If \overline{s(u)} >= s(\overline{u})
+        #     @show "overline{s(u)} >= s(overline{u})"
+        # end
+    end
+
+    # Try out integrated bounds on specific entropy
+    for k = 1:K
+        l1 = sULavg[k]
+        l2 = sLavg[k]
+        b1 = min(minimum(sk[:,k]),sk[end,mod1(k-1,K)],sk[1,mod1(k+1,K)])
+        b2 = min(sUavg[mod1(k-1,K)],sUavg[k],sUavg[mod1(k+1,K)])
+        # b2 = minimum(sUavg)
+        b3 = min(savg[mod1(k-1,K)],savg[k],savg[mod1(k+1,K)])
+        # b3 = minimum(savg)
+        b4 = min(sULavg[mod1(k-1,K)],sULavg[k],sULavg[mod1(k+1,K)])
+        b5 = min(sLavg[mod1(k-1,K)],sLavg[k],sLavg[mod1(k+1,K)])
+        # if !(l1 >= b1)
+        #     @show "inequality 1 fails! Difference",abs(l1-b1)
+        # end
+        # if !(l1 >= b2)
+        #     @show "inequality 2 fails! Difference",abs(l1-b2)
+        # end
+        # if !(l1 >= b3)
+        #     @show "inequality 3 fails! Difference",abs(l1-b3)
+        # end
+        # if !(l1 >= b4)
+        #     @show "inequality 4 fails! Difference",abs(l1-b4)
+        # end
+        # if !(l1 >= b5)
+        #     @show "inequality 5 fails! Difference",abs(l1-b5)
+        # end
+
+        # if !(l2 >= b1)
+        #     @show "inequality 6 fails! Difference",abs(l2-b1)
+        # end
+        # if !(l2 >= b2)
+        #     @show "inequality 7 fails! Difference",abs(l2-b2)
+        # end
+        # if !(l2 >= b3)
+        #     @show "inequality 8 fails! Difference",abs(l2-b3)
+        # end
+        # if !(l2 >= b4)
+        #     @show "inequality 9 fails! Difference",abs(l2-b4)
+        # end
+        # if !(l2 >= b5)
+        #     @show "inequality 10 fails! Difference",abs(l2-b5)
+        # end
     end
 
     # Ulnbar = zeros(N+1,K)
@@ -663,7 +743,7 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,T,dt,in_s1,is_low_order)
         # Bound Limiting 
         if (RHO_LIMIT_TYPE == 0)
             Limrho .= 1.0
-        elseif ((RHO_LIMIT_TYPE == 1) || (RHO_LIMIT_TYPE == 2) || (RHO_LIMIT_TYPE == 4))
+        elseif ((RHO_LIMIT_TYPE == 1) || (RHO_LIMIT_TYPE == 2) || (RHO_LIMIT_TYPE == 4) || (RHO_LIMIT_TYPE == 10))
             # Bound limiting (nodewise)
             Pi = zeros(3)
             for i = 1:N+1
@@ -690,6 +770,9 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,T,dt,in_s1,is_low_order)
                 elseif (RHO_LIMIT_TYPE == 4)   # Weakest nodewise bound
                     Lrho = RHOMIN_GLOBAL
                     Urho = RHOMAX_GLOBAL
+                elseif (RHO_LIMIT_TYPE == 10)  # Relaxed global bound
+                    Lrho = 0.99*RHOMIN_GLOBAL
+                    Urho = 1.01*RHOMAX_GLOBAL
                 else                     # Nodewise bound with smoothness indicator
                     epsk = smoothness_indicator[k]
                     if i == 1
@@ -782,7 +865,7 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,T,dt,in_s1,is_low_order)
             #         Limrho[i,j] = min(l1,l2)
             #     end
             # end
-        elseif ((RHO_LIMIT_TYPE == 7) || (RHO_LIMIT_TYPE == 8))
+        elseif ((RHO_LIMIT_TYPE == 7) || (RHO_LIMIT_TYPE == 8) || (RHO_LIMIT_TYPE == 9) || (RHO_LIMIT_TYPE == 11))
             lambda = 1/2
             for i = 1:N+1
                 alphai = Inf
@@ -803,6 +886,9 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,T,dt,in_s1,is_low_order)
                 elseif (RHO_LIMIT_TYPE == 8)
                     Lrho = RHOMIN_GLOBAL
                     Urho = RHOMAX_GLOBAL
+                elseif ((RHO_LIMIT_TYPE == 9) || (RHO_LIMIT_TYPE == 11))
+                    Lrho = 0.99*RHOMIN_GLOBAL
+                    Urho = 1.01*RHOMAX_GLOBAL
                 end
 
                 if i > 1
@@ -811,6 +897,15 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,T,dt,in_s1,is_low_order)
                 end
                 alphai = min(alphai,limiting_param_rhobound(U_low[1][i], coeff*rbararr[1,i],Lrho,Urho))
                 alphai = min(alphai,limiting_param_rhobound(U_low[1][i],-coeff*rbararr[1,i],Lrho,Urho))
+
+                if (RHO_LIMIT_TYPE == 11)
+                    alphai = limiting_param_rhobound(U_low[1][i], coeff*rbararr[1,i],Lrho,Urho)
+                    if i < N+1
+                        m_ip1 = J*wq[i+1]
+                        coeffip1 = dt/(m_ip1*lambda)
+                        alphai = min(alphai,limiting_param_rhobound(U_low[1][i+1],-coeffip1*rbararr[1,i],Lrho,Urho))
+                    end
+                end
                 for j = 1:N+1
                     Limrho[i,j] = alphai
                 end
@@ -819,7 +914,7 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,T,dt,in_s1,is_low_order)
 
         if (S_LIMIT_TYPE == 0)
             Lims .= 1.0
-        elseif ((S_LIMIT_TYPE == 1) || (S_LIMIT_TYPE == 2) || (S_LIMIT_TYPE == 4))
+        elseif ((S_LIMIT_TYPE == 1) || (S_LIMIT_TYPE == 2) || (S_LIMIT_TYPE == 4) || (S_LIMIT_TYPE == 10))
             # Minimum specific entropy principle
             Pi = zeros(3)
             for i = 1:N+1
@@ -842,6 +937,14 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,T,dt,in_s1,is_low_order)
                     end
                 elseif (S_LIMIT_TYPE == 4) # Weakest nodewise bound
                     Ls = SMIN_GLOBAL
+                elseif (S_LIMIT_TYPE == 10)
+                    if (SMIN_GLOBAL > 0)
+                        Ls = 0.99*SMIN_GLOBAL
+                    elseif (SMIN_GLOBAL < 0)
+                        Ls = 1.01*SMIN_GLOBAL
+                    else
+                        Ls = SMIN_GLOBAL - 1e-6
+                    end
                 else                     # Nodewise bound with smoothness indicator
                     epsk = smoothness_indicator[k]
                     if i == 1
@@ -925,7 +1028,7 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,T,dt,in_s1,is_low_order)
             #         Lims[i,j] = min(l1,l2)
             #     end
             # end
-        elseif ((S_LIMIT_TYPE == 7) || (S_LIMIT_TYPE == 8))
+        elseif ((S_LIMIT_TYPE == 7) || (S_LIMIT_TYPE == 8) || (S_LIMIT_TYPE == 9) || (S_LIMIT_TYPE == 11))
             lambda = 1/2
 
             for i = 1:N+1
@@ -943,6 +1046,14 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,T,dt,in_s1,is_low_order)
                     end
                 elseif (S_LIMIT_TYPE == 8)
                     Ls = SMIN_GLOBAL
+                elseif ((S_LIMIT_TYPE == 9) || (S_LIMIT_TYPE == 11))
+                    if (SMIN_GLOBAL > 0)
+                        Ls = 0.99*SMIN_GLOBAL
+                    elseif (SMIN_GLOBAL < 0)
+                        Ls = 1.01*SMIN_GLOBAL
+                    else
+                        Ls = SMIN_GLOBAL - 1e-6
+                    end
                 end
 
                 if i > 1
@@ -951,6 +1062,15 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,T,dt,in_s1,is_low_order)
                 end
                 alphai = min(alphai,limiting_param_sbound(U_low[1][i],U_low[2][i],U_low[3][i], coeff*rbararr[1,i], coeff*rbararr[2,i], coeff*rbararr[3,i],Ls))
                 alphai = min(alphai,limiting_param_sbound(U_low[1][i],U_low[2][i],U_low[3][i],-coeff*rbararr[1,i],-coeff*rbararr[2,i],-coeff*rbararr[3,i],Ls))
+
+                if (S_LIMIT_TYPE == 11)
+                    alphai = limiting_param_sbound(U_low[1][i],U_low[2][i],U_low[3][i], coeff*rbararr[1,i], coeff*rbararr[2,i], coeff*rbararr[3,i],Ls)
+                    if i < N+1
+                        m_ip1 = J*wq[i+1]
+                        coeffip1 = dt/(m_ip1*lambda)
+                        alphai = min(alphai,limiting_param_sbound(U_low[1][i+1],U_low[2][i+1],U_low[3][i+1],-coeffip1*rbararr[1,i],-coeffip1*rbararr[2,i],-coeffip1*rbararr[3,i],Ls))
+                    end
+                end
                 for j = 1:N+1
                     Lims[i,j] = alphai
                 end
@@ -984,12 +1104,22 @@ function rhs_IDP(U,K,N,wq,S,S0,Mlump_inv,T,dt,in_s1,is_low_order)
 
             for i = 1:N+1
                 for c = 1:3
-                    if (i == 1)
-                        rhsU[c][i,k] += min(alphaarr[1],alphaarr[2])*rbararr[c,1]
-                    elseif (i == N+1)
-                        rhsU[c][i,k] += alphaarr[i]*rbararr[c,i] - min(alphaarr[i-1],alphaarr[i])*rbararr[c,i-1]
+                    if ((RHO_LIMIT_TYPE == 11) && (S_LIMIT_TYPE == 11))
+                        if (i == 1)
+                            rhsU[c][i,k] += alphaarr[1]*rbararr[c,1]
+                        elseif (i == N+1)
+                            rhsU[c][i,k] += alphaarr[i]*rbararr[c,i] - alphaarr[i-1]*rbararr[c,i-1]
+                        else
+                            rhsU[c][i,k] += alphaarr[i]*rbararr[c,i] - alphaarr[i-1]*rbararr[c,i-1]
+                        end
                     else
-                        rhsU[c][i,k] += min(alphaarr[i],alphaarr[i+1])*rbararr[c,i] - min(alphaarr[i-1],alphaarr[i])*rbararr[c,i-1]
+                        if (i == 1)
+                            rhsU[c][i,k] += min(alphaarr[1],alphaarr[2])*rbararr[c,1]
+                        elseif (i == N+1)
+                            rhsU[c][i,k] += alphaarr[i]*rbararr[c,i] - min(alphaarr[i-1],alphaarr[i])*rbararr[c,i-1]
+                        else
+                            rhsU[c][i,k] += min(alphaarr[i],alphaarr[i+1])*rbararr[c,i] - min(alphaarr[i-1],alphaarr[i])*rbararr[c,i-1]
+                        end
                     end
                 end
             end
@@ -1201,7 +1331,7 @@ while t < T
     global i = i + 1
     println("Current time $t with time step size $dt, and final time $T")
 
-    if i % 10 == 0
+    if ((i % 10 == 0) && PLOTGIF)
         #plot(Vp*x,Vp*U[1])
         plot(Vp*x,Vp*U[1])
         Bl = -1
@@ -1234,8 +1364,52 @@ end
 
 # plot(Vp*x,Vp*U[1])
 # savefig("N=$N,K=$K,T=$T,is_low_order=$is_low_order,RHO_LIMIT_TYPE=$RHO_LIMIT_TYPE,S_LIMIT_TYPE=$S_LIMIT_TYPE,HIGH_ORDER_FLUX_TYPE=$HIGH_ORDER_FLUX_TYPE,IS_ELEMENTWISE_LIMIT=$IS_ELEMENTWISE_LIMIT,bounds.png")
-gif(anim,"N=$N,K=$K,T=$T,is_low_order=$is_low_order,RHO_LIMIT_TYPE=$RHO_LIMIT_TYPE,S_LIMIT_TYPE=$S_LIMIT_TYPE,HIGH_ORDER_FLUX_TYPE=$HIGH_ORDER_FLUX_TYPE,IS_ELEMENTWISE_LIMIT=$IS_ELEMENTWISE_LIMIT,IS_SUBCELL_LIMIT=$IS_SUBCELL_LIMIT,bounds.gif",fps=30)
+if (PLOTGIF)
+    gif(anim,"N=$N,K=$K,T=$T,is_low_order=$is_low_order,RHO_LIMIT_TYPE=$RHO_LIMIT_TYPE,S_LIMIT_TYPE=$S_LIMIT_TYPE,HIGH_ORDER_FLUX_TYPE=$HIGH_ORDER_FLUX_TYPE,IS_ELEMENTWISE_LIMIT=$IS_ELEMENTWISE_LIMIT,IS_SUBCELL_LIMIT=$IS_SUBCELL_LIMIT,bounds.gif",fps=30)
+end
 
+
+rho = U[1]
+rhou = U[2]
+E = U[3]
+exact_rho = zeros(N+1,K)
+exact_rhou = zeros(N+1,K)
+exact_E = zeros(N+1,K)
+for k = 1:K
+    for i = 1:N+1
+        rho,rhou,E = exact_sol_sine_wave(x[i,k],T)
+        exact_rho[i,k] = rho
+        exact_rhou[i,k] = rhou
+        exact_E[i,k] = E
+    end
+end
+J = 1/K  # TODO: hardcoded jacobian
+
+Linferr = maximum(abs.(exact_rho-rho))/maximum(abs.(exact_rho)) +
+          maximum(abs.(exact_rhou-rhou))/maximum(abs.(exact_rhou)) +
+          maximum(abs.(exact_E-E))/maximum(abs.(exact_E))
+
+L1err = sum(J*wq.*abs.(exact_rho-rho))/sum(J*wq.*abs.(exact_rho)) +
+        sum(J*wq.*abs.(exact_rhou-rhou))/sum(J*wq.*abs.(exact_rhou)) +
+        sum(J*wq.*abs.(exact_E-E))/sum(J*wq.*abs.(exact_E))
+
+L2err = sqrt(sum(J*wq.*abs.(exact_rho-rho).^2))/sqrt(sum(J*wq.*abs.(exact_rho).^2)) +
+        sqrt(sum(J*wq.*abs.(exact_rhou-rhou).^2))/sqrt(sum(J*wq.*abs.(exact_rhou).^2)) +
+        sqrt(sum(J*wq.*abs.(exact_E-E).^2))/sqrt(sum(J*wq.*abs.(exact_E).^2))
+
+println("N = $N, K = $K")
+println("L1 error is $L1err")
+println("L2 error is $L2err")
+println("Linf error is $Linferr")
+
+# df = DataFrame(N = Int64[], K = Int64[], T = Float64[], ISLOWORDER = Bool[], CASENUM = Int64[], RHO_LIMIT_TYPE = Int64[], S_LIMIT_TYPE = Int64[], IS_ELEMENTWISE_LIMIT = Bool[], IS_SUBCELL_LIMIT = Bool[], HIGH_ORDER_FLUX_TYPE = Int64[], L1ERR = Float64[], L2ERR = Float64[], LINFERR = Float64[])
+# CSV.write("dg1D_euler_bounds_convergence.csv",df)
+if ADDTODF
+    df = CSV.read("dg1D_euler_bounds_convergence.csv", DataFrame)
+    push!(df,(N,K,T,is_low_order,CASENUM,RHO_LIMIT_TYPE,S_LIMIT_TYPE,IS_ELEMENTWISE_LIMIT,IS_SUBCELL_LIMIT,HIGH_ORDER_FLUX_TYPE,L1err,L2err,Linferr))
+    CSV.write("dg1D_euler_bounds_convergence.csv",df)
+    @show df
+end
 
 #=
 # Plot a single time step of low order update
