@@ -1,5 +1,7 @@
+using Pkg
+Pkg.activate("Project.toml")
 using Revise # reduce recompilation time
-using Plots
+# using Plots
 # using Documenter
 using LinearAlgebra
 using SparseArrays
@@ -9,6 +11,9 @@ using StaticArrays
 using DelimitedFiles
 using Polyester
 using MuladdMacro
+using DataFrames
+using JLD2
+using FileIO
 
 push!(LOAD_PATH, "./src")
 using CommonUtils
@@ -18,10 +23,10 @@ using UniformQuadMesh
 
 using SetupDG
 
-push!(LOAD_PATH, "./examples/EntropyStableEuler.jl/src")
-include("../EntropyStableEuler.jl/src/logmean.jl")
-using EntropyStableEuler
-using EntropyStableEuler.Fluxes2D
+# push!(LOAD_PATH, "./examples/EntropyStableEuler.jl/src")
+# include("../EntropyStableEuler.jl/src/logmean.jl")
+# using EntropyStableEuler
+# using EntropyStableEuler.Fluxes2D
 
 @muladd begin
 
@@ -153,23 +158,23 @@ end
     return fx1,fx2,fx3,fx4,fy1,fy2,fy3,fy4
 end
 
-@inline function limiting_param(rhoL,rhouL,rhovL,EL,rhoP,rhouP,rhovP,EP)
+@inline function limiting_param(rhoL,rhouL,rhovL,EL,rhoP,rhouP,rhovP,EP,Lrho,Lrhoe)
     # L - low order, P - P_ij
     l = 1.0
     # Limit density
-    if rhoL + rhoP < -TOL
-        l = max((-rhoL+POSTOL)/rhoP, 0.0)
+    if rhoL + rhoP < Lrho
+        l = max((Lrho-rhoL)/rhoP, 0.0)
     end
 
     p = pfun(rhoL+l*rhoP,rhouL+l*rhouP,rhovL+l*rhovP,EL+l*EP)
-    if p > TOL
+    if p/(γ-1) > Lrhoe
         return l
     end
 
     # limiting internal energy (via quadratic function)
     a = rhoP*EP-(rhouP^2+rhovP^2)/2.0
-    b = rhoP*EL+rhoL*EP-rhouL*rhouP-rhovL*rhovP
-    c = rhoL*EL-(rhouL^2+rhovL^2)/2.0-POSTOL
+    b = rhoP*EL+rhoL*EP-rhouL*rhouP-rhovL*rhovP-rhoP*Lrhoe
+    c = rhoL*EL-(rhouL^2+rhovL^2)/2.0-rhoL*Lrhoe
 
     d = 1.0/(2.0*a)
     e = b^2-4.0*a*c
@@ -194,8 +199,9 @@ end
     return l
 end
 
-const LIMITOPT = 1 # 1 if elementwise limiting lij, 2 if elementwise limiting li
+const LIMITOPT = 2 # 1 if elementwise limiting lij, 2 if elementwise limiting li
 const POSDETECT = 0 # 1 if turn on detection, 0 otherwise
+const LBOUNDTYPE = 1 # 0 if use POSTOL as lower bound, 1 if use 0.1*loworder
 const TOL = 5e-16
 const POSTOL = 1e-14
 const WALLPT = 1.0/6.0
@@ -204,7 +210,7 @@ const Nc = 4 # number of components
 "Approximation parameters"
 const N = parse(Int,ARGS[1])    # N = 2,3,4
 const K1D = parse(Int,ARGS[2])  # K = 10,20,40,80,160
-const T = 2.0#2.0
+const T = 2.0
 const dt0 = 1e+1
 const XLENGTH = 2.0
 const CFL = 0.9
@@ -652,66 +658,78 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
             is_H_positive = false
         end
 
-        # Calculate limiting parameters
-        if !is_H_positive
-            for ni = 1:S_nnz_hv
-                i = S_nnzi[ni]
-                j = S_nnzj[ni]
-                coeff_i = dt*coeff_arr[i]
-                coeff_j = dt*coeff_arr[j]
+        if (LIMITOPT == 1)
+            # Calculate limiting parameters
+            if !is_H_positive
+                for ni = 1:S_nnz_hv
+                    i = S_nnzi[ni]
+                    j = S_nnzj[ni]
+                    coeff_i = dt*coeff_arr[i]
+                    coeff_j = dt*coeff_arr[j]
+                    rhoi  = U_low[1,i,tid]
+                    rhoui = U_low[2,i,tid]
+                    rhovi = U_low[3,i,tid]
+                    Ei    = U_low[4,i,tid]
+                    rhoj  = U_low[1,j,tid]
+                    rhouj = U_low[2,j,tid]
+                    rhovj = U_low[3,j,tid]
+                    Ej    = U_low[4,j,tid]
+                    rhoP  = (F_low[1,i,j,tid]-F_high[1,i,j,tid])
+                    rhouP = (F_low[2,i,j,tid]-F_high[2,i,j,tid])
+                    rhovP = (F_low[3,i,j,tid]-F_high[3,i,j,tid])
+                    EP    = (F_low[4,i,j,tid]-F_high[4,i,j,tid])
+                    rhoP_i  = coeff_i*rhoP  
+                    rhouP_i = coeff_i*rhouP 
+                    rhovP_i = coeff_i*rhovP 
+                    EP_i    = coeff_i*EP    
+                    rhoP_j  = -coeff_j*rhoP  
+                    rhouP_j = -coeff_j*rhouP 
+                    rhovP_j = -coeff_j*rhovP 
+                    EP_j    = -coeff_j*EP
+                    Lrho      = POSTOL
+                    Lrhoe     = POSTOL
+                    L[ni,tid] = min(limiting_param(rhoi,rhoui,rhovi,Ei,rhoP_i,rhouP_i,rhovP_i,EP_i,Lrho,Lrhoe),
+                                    limiting_param(rhoj,rhouj,rhovj,Ej,rhoP_j,rhouP_j,rhovP_j,EP_j,Lrho,Lrhoe))
+                end
+            end
+        elseif (LIMITOPT == 2)
+            # li limiting
+            li_min = 1.0 # limiting parameter for element
+            for i = 1:Np
                 rhoi  = U_low[1,i,tid]
                 rhoui = U_low[2,i,tid]
                 rhovi = U_low[3,i,tid]
                 Ei    = U_low[4,i,tid]
-                rhoj  = U_low[1,j,tid]
-                rhouj = U_low[2,j,tid]
-                rhovj = U_low[3,j,tid]
-                Ej    = U_low[4,j,tid]
-                rhoP  = (F_low[1,i,j,tid]-F_high[1,i,j,tid])
-                rhouP = (F_low[2,i,j,tid]-F_high[2,i,j,tid])
-                rhovP = (F_low[3,i,j,tid]-F_high[3,i,j,tid])
-                EP    = (F_low[4,i,j,tid]-F_high[4,i,j,tid])
-                rhoP_i  = coeff_i*rhoP  
-                rhouP_i = coeff_i*rhouP 
-                rhovP_i = coeff_i*rhovP 
-                EP_i    = coeff_i*EP    
-                rhoP_j  = -coeff_j*rhoP  
-                rhouP_j = -coeff_j*rhouP 
-                rhovP_j = -coeff_j*rhovP 
-                EP_j    = -coeff_j*EP
-                L[ni,tid] = min(limiting_param(rhoi,rhoui,rhovi,Ei,rhoP_i,rhouP_i,rhovP_i,EP_i),
-                                limiting_param(rhoj,rhouj,rhovj,Ej,rhoP_j,rhouP_j,rhovP_j,EP_j))
+                rhoP_i  = 0.0
+                rhouP_i = 0.0
+                rhovP_i = 0.0
+                EP_i    = 0.0
+                coeff   = dt*MJ_inv[i]
+                for j = 1:Np
+                    rhoP   = (F_low[1,i,j,tid]-F_high[1,i,j,tid])
+                    rhouP  = (F_low[2,i,j,tid]-F_high[2,i,j,tid])
+                    rhovP  = (F_low[3,i,j,tid]-F_high[3,i,j,tid])
+                    EP     = (F_low[4,i,j,tid]-F_high[4,i,j,tid])
+                    rhoP_i  = rhoP_i  + coeff*rhoP 
+                    rhouP_i = rhouP_i + coeff*rhouP 
+                    rhovP_i = rhovP_i + coeff*rhovP 
+                    EP_i    = EP_i    + coeff*EP 
+                end
+                if (LBOUNDTYPE == 0)
+                    Lrho  = POSTOL
+                    Lrhoe = POSTOL
+                elseif (LBOUNDTYPE == 1)
+                    Lrho  = 0.1*rhoi
+                    Lrhoe = 0.1*pfun(rhoi,rhoui,rhovi,Ei)/(γ-1)
+                end
+                l = limiting_param(rhoi,rhoui,rhovi,Ei,rhoP_i,rhouP_i,rhovP_i,EP_i,Lrho,Lrhoe)
+                li_min = min(li_min,l)
+            end
+
+            for ni = 1:S_nnz_hv
+                L[ni,tid] = li_min
             end
         end
-        
-        # li_min = 1.0 # limiting parameter for element
-        # for i = 1:Np
-        #     rhoi  = U_low[1,i,tid]
-        #     rhoui = U_low[2,i,tid]
-        #     rhovi = U_low[3,i,tid]
-        #     Ei    = U_low[4,i,tid]
-        #     rhoP_i  = 0.0
-        #     rhouP_i = 0.0
-        #     rhovP_i = 0.0
-        #     EP_i    = 0.0
-        #     coeff   = dt*MJ_inv[i]
-        #     for j = 1:Np
-        #         rhoP   = (F_low[1,i,j,tid]-F_high[1,i,j,tid])
-        #         rhouP  = (F_low[2,i,j,tid]-F_high[2,i,j,tid])
-        #         rhovP  = (F_low[3,i,j,tid]-F_high[3,i,j,tid])
-        #         EP     = (F_low[4,i,j,tid]-F_high[4,i,j,tid])
-        #         rhoP_i  = rhoP_i  + coeff*rhoP 
-        #         rhouP_i = rhouP_i + coeff*rhouP 
-        #         rhovP_i = rhovP_i + coeff*rhovP 
-        #         EP_i    = EP_i    + coeff*EP 
-        #     end
-        #     l = limiting_param(rhoi,rhoui,rhovi,Ei,rhoP_i,rhouP_i,rhovP_i,EP_i)
-        #     li_min = min(li_min,l)
-        # end
-
-        # for ni = 1:S_nnz_hv
-        #     L[ni,tid] = li_min
-        # end
 
         # Elementwise limiting
         l_e = 1.0
@@ -961,12 +979,12 @@ t = 0.0
 U = collect(U)
 resW = zeros(size(U))
 
-#plotting nodes
-@unpack VDM = rd
-rp,sp = equi_nodes_2D(10)
-Vp = vandermonde_2D(N,rp,sp)/VDM
-gr(aspect_ratio=:equal,legend=false,
-   markerstrokewidth=0,markersize=2)
+# #plotting nodes
+# @unpack VDM = rd
+# rp,sp = equi_nodes_2D(10)
+# Vp = vandermonde_2D(N,rp,sp)/VDM
+# gr(aspect_ratio=:equal,legend=false,
+#    markerstrokewidth=0,markersize=2)
 
 #=
 #Timing
@@ -979,12 +997,12 @@ dt = dt0
 dt_hist = []
 i = 1
 
-open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x,convquad.txt","w") do io
-    writedlm(io,x)
-end
-open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,y,convquad.txt","w") do io
-    writedlm(io,y)
-end
+# open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x,convquad.txt","w") do io
+#     writedlm(io,x)
+# end
+# open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,y,convquad.txt","w") do io
+#     writedlm(io,y)
+# end
 
 @time while t < T
 #while i < 2
@@ -1008,40 +1026,40 @@ end
     global i = i + 1
     # if ((mod(i,100) == 1) | (i >= 55))
     if (mod(i,100) == 1)
-        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,rho,convquad.txt","w") do io
-            writedlm(io,U[1,:,:])
-        end
-        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,rhou,convquad.txt","w") do io
-            writedlm(io,U[2,:,:])
-        end
-        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,rhov,convquad.txt","w") do io
-            writedlm(io,U[3,:,:])
-        end
-        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,E,convquad.txt","w") do io
-            writedlm(io,U[4,:,:])
-        end
-        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,L_plot,convquad.txt","w") do io
-            writedlm(io,L_plot)
-        end
+        # open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,rho,convquad.txt","w") do io
+        #     writedlm(io,U[1,:,:])
+        # end
+        # open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,rhou,convquad.txt","w") do io
+        #     writedlm(io,U[2,:,:])
+        # end
+        # open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,rhov,convquad.txt","w") do io
+        #     writedlm(io,U[3,:,:])
+        # end
+        # open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,E,convquad.txt","w") do io
+        #     writedlm(io,U[4,:,:])
+        # end
+        # open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,L_plot,convquad.txt","w") do io
+        #     writedlm(io,L_plot)
+        # end
 
     end
 end
 
-open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,rho,convquad.txt","w") do io
-    writedlm(io,U[1,:,:])
-end
-open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,rhou,convquad.txt","w") do io
-    writedlm(io,U[2,:,:])
-end
-open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,rhov,convquad.txt","w") do io
-    writedlm(io,U[3,:,:])
-end
-open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,E,convquad.txt","w") do io
-    writedlm(io,U[4,:,:])
-end
-open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,L_plot,convquad.txt","w") do io
-    writedlm(io,L_plot)
-end
+# open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,rho,convquad.txt","w") do io
+#     writedlm(io,U[1,:,:])
+# end
+# open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,rhou,convquad.txt","w") do io
+#     writedlm(io,U[2,:,:])
+# end
+# open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,rhov,convquad.txt","w") do io
+#     writedlm(io,U[3,:,:])
+# end
+# open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,E,convquad.txt","w") do io
+#     writedlm(io,U[4,:,:])
+# end
+# open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,L_plot,convquad.txt","w") do io
+#     writedlm(io,L_plot)
+# end
 
 exact_U = @. vortex_sol.(x,y,T)
 exact_rho = [x[1] for x in exact_U]
@@ -1079,9 +1097,10 @@ println("L1 error is $L1err")
 println("L2 error is $L2err")
 println("Linf error is $Linferr")
 
-
-
-
+# df = DataFrame(N = Int64[], K = Int64[], T = Float64[], CFL = Float64[], LIMITOPT = Int64[], POSDETECT = Int64[], LBOUNDTYPE = Int64[], L1err = Float64[], L2err = Float64[], Linferr = Float64[])
+df = load("dg2D_euler_quad_convergence.jld2","convergence_data")
+push!(df,(N,K,T,CFL,LIMITOPT,POSDETECT,LBOUNDTYPE,L1err,L2err,Linferr))
+save("dg2D_euler_quad_convergence.jld2","convergence_data",df)
 
 end #muladd
 
