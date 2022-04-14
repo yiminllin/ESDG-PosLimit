@@ -279,11 +279,11 @@ end
 const LIMITOPT   = 2 # 1 if elementwise limiting lij, 2 if elementwise limiting li
 const POSDETECT  = 0 # 1 if turn on detection, 0 otherwise
 const LBOUNDTYPE = 1 # 0 if use POSTOL as lower bound, 1 if use 0.1*loworder
-const BCFLUXTYPE = 0 # 0 - Central, 1 - Nondissipative, 2 - dissipative
+const BCFLUXTYPE = 2 # 0 - Central, 1 - Nondissipative, 2 - dissipative
 const TOL = 1e-14
 const POSTOL = 1e-14
 const Nc = 4 # number of components
-const GIFINT = 5
+const GIFINT = 100
 const USEPLOTPT = true
 const NUMPLOTPT = 12
 
@@ -1022,6 +1022,22 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
                     F_P[2,i,tid] = wfi*f2s
                     F_P[3,i,tid] = wfi*f3s
                     F_P[4,i,tid] = wfi*f4s
+
+                    # flux in x direction
+                    if is_face_x(i)
+                        F_P[1,i,tid] -= BrJ_ii_halved*(sigmax_1_M+sigmax_1_P)
+                        F_P[2,i,tid] -= BrJ_ii_halved*(sigmax_2_M+sigmax_2_P)
+                        F_P[3,i,tid] -= BrJ_ii_halved*(sigmax_3_M+sigmax_3_P)
+                        F_P[4,i,tid] -= BrJ_ii_halved*(sigmax_4_M+sigmax_4_P)
+                    end
+
+                    # flux in y direction
+                    if is_face_y(i)
+                        F_P[1,i,tid] -= BsJ_ii_halved*(sigmay_1_M+sigmay_1_P)
+                        F_P[2,i,tid] -= BsJ_ii_halved*(sigmay_2_M+sigmay_2_P)
+                        F_P[3,i,tid] -= BsJ_ii_halved*(sigmay_3_M+sigmay_3_P)
+                        F_P[4,i,tid] -= BsJ_ii_halved*(sigmay_4_M+sigmay_4_P)
+                    end
                 end
             end
         end
