@@ -13,6 +13,7 @@ using MuladdMacro
 using DataFrames
 using JLD2
 using FileIO
+using WriteVTK
 
 push!(LOAD_PATH, "./src")
 using CommonUtils
@@ -193,66 +194,58 @@ end
     return l
 end
 
-@inline function zhang_wavespd(rho,rhou,rhov,E,sigmax2,sigmax3,sigmax4,sigmay2,sigmay3,sigmay4,nx,ny)
-    p = pfun(rho,rhou,rhov,E)
-    u = rhou/rho
-    v = rhov/rho
-    e = (E-.5*rho*(u^2+v^2))/rho
+@inline function zhang_wavespd(rhoi,rhoui,rhovi,Ei,sigmax2,sigmax3,sigmax4,sigmay2,sigmay3,sigmay4,nx,ny)
+    pl = pfun(rhoi,rhoui,rhovi,Ei)
+    ui = rhoui/rhoi
+    vi = rhovi/rhoi
+    ei = (Ei-.5*rhoi*(ui^2+vi^2))/rhoi
     tau_xx = sigmax2
     tau_yx = sigmax3
     tau_xy = sigmay2
     tau_yy = sigmay3
-    q_x = u*tau_xx+v*tau_yx-sigmax4
-    q_y = u*tau_xy+v*tau_yy-sigmay4
+    q_x = ui*tau_xx+vi*tau_yx-sigmax4
+    q_y = ui*tau_xy+vi*tau_yy-sigmay4
 
-    v_vec = u*nx+v*ny
+    v_vec = ui*nx+vi*ny
     q_vec = q_x*nx+q_y*ny
     tau_vec_x = nx*tau_xx+ny*tau_yx
     tau_vec_y = nx*tau_xy+ny*tau_yy
 
-    return POSTOL+abs(v_vec)+1/(2*rho^2*e)*(sqrt(rho^2*q_vec^2+2*rho^2*e*((tau_vec_x-p*nx)^2+(tau_vec_y-p*ny)^2))+rho*abs(q_vec))
+    return POSTOL+abs(v_vec)+1/(2*rhoi^2*ei)*(sqrt(rhoi^2*q_vec^2+2*rhoi^2*ei*((tau_vec_x-pl*nx)^2+(tau_vec_y-pl*ny)^2))+rhoi*abs(q_vec))
 end
 
-@inline function get_Kvisc(v1,v2,v3,v4)
-    lam = -lambda
+@inline function get_Kvisc(Kxx,Kyy,Kxy,tid,v1,v2,v3,v4)
     λ = -lambda
     μ   = mu
     v2_sq = v2^2
     v3_sq = v3^2
     v4_sq = v4^2
-    v43_inv = 1/(v4_sq*v4)
     λ2μ = (λ+2.0*μ)
     inv_v4_cubed = 1/(v4^3)
 
-    Kxx = zeros(4,4)
-    Kxy = zeros(4,4)
-    Kyy = zeros(4,4)
+    Kxx[tid][2,2] = inv_v4_cubed*-λ2μ*v4_sq
+    Kxx[tid][2,4] = inv_v4_cubed*λ2μ*v2*v4
+    Kxx[tid][3,3] = inv_v4_cubed*-μ*v4_sq
+    Kxx[tid][3,4] = inv_v4_cubed*μ*v3*v4
+    Kxx[tid][4,2] = inv_v4_cubed*λ2μ*v2*v4
+    Kxx[tid][4,3] = inv_v4_cubed*μ*v3*v4
+    Kxx[tid][4,4] = inv_v4_cubed*-(λ2μ*v2_sq + μ*v3_sq - γ*μ*v4/Pr)
 
-    Kxx[2,2] = inv_v4_cubed*-λ2μ*v4^2
-    Kxx[2,4] = inv_v4_cubed*λ2μ*v2*v4
-    Kxx[3,3] = inv_v4_cubed*-μ*v4^2
-    Kxx[3,4] = inv_v4_cubed*μ*v3*v4
-    Kxx[4,2] = inv_v4_cubed*λ2μ*v2*v4
-    Kxx[4,3] = inv_v4_cubed*μ*v3*v4
-    Kxx[4,4] = inv_v4_cubed*-(λ2μ*v2^2 + μ*v3^2 - γ*μ*v4/Pr)
+    Kxy[tid][2,3] = inv_v4_cubed*-λ*v4_sq
+    Kxy[tid][2,4] = inv_v4_cubed*λ*v3*v4
+    Kxy[tid][3,2] = inv_v4_cubed*-μ*v4_sq
+    Kxy[tid][3,4] = inv_v4_cubed*μ*v2*v4
+    Kxy[tid][4,2] = inv_v4_cubed*μ*v3*v4
+    Kxy[tid][4,3] = inv_v4_cubed*λ*v2*v4
+    Kxy[tid][4,4] = inv_v4_cubed*(λ+μ)*(-v2*v3)
 
-    Kxy[2,3] = inv_v4_cubed*-λ*v4^2
-    Kxy[2,4] = inv_v4_cubed*λ*v3*v4
-    Kxy[3,2] = inv_v4_cubed*-μ*v4^2
-    Kxy[3,4] = inv_v4_cubed*μ*v2*v4
-    Kxy[4,2] = inv_v4_cubed*μ*v3*v4
-    Kxy[4,3] = inv_v4_cubed*λ*v2*v4
-    Kxy[4,4] = inv_v4_cubed*(λ+μ)*(-v2*v3)
-
-    Kyy[2,2] = inv_v4_cubed*-μ*v4^2
-    Kyy[2,4] = inv_v4_cubed*μ*v2*v4
-    Kyy[3,3] = inv_v4_cubed*-λ2μ*v4^2
-    Kyy[3,4] = inv_v4_cubed*λ2μ*v3*v4
-    Kyy[4,2] = inv_v4_cubed*μ*v2*v4
-    Kyy[4,3] = inv_v4_cubed*λ2μ*v3*v4
-    Kyy[4,4] = inv_v4_cubed*-(λ2μ*v3^2 + μ*v2^2 - γ*μ*v4/Pr)
-
-    return Kxx,Kxy,Kyy
+    Kyy[tid][2,2] = inv_v4_cubed*-μ*v4_sq
+    Kyy[tid][2,4] = inv_v4_cubed*μ*v2*v4
+    Kyy[tid][3,3] = inv_v4_cubed*-λ2μ*v4_sq
+    Kyy[tid][3,4] = inv_v4_cubed*λ2μ*v3*v4
+    Kyy[tid][4,2] = inv_v4_cubed*μ*v2*v4
+    Kyy[tid][4,3] = inv_v4_cubed*λ2μ*v3*v4
+    Kyy[tid][4,4] = inv_v4_cubed*-(λ2μ*v3_sq + μ*v2_sq - γ*μ*v4/Pr)
 end
 
 @inline function entropyvar(rho,rhou,rhov,E)
@@ -276,6 +269,8 @@ end
     return v1,v2,v3,v4
 end
 
+const OUTPUTPATH = "/home/yiminlin/Desktop/dg2D_CNS_quad_shocktube_output"
+
 const LIMITOPT   = 2 # 1 if elementwise limiting lij, 2 if elementwise limiting li
 const POSDETECT  = 0 # 1 if turn on detection, 0 otherwise
 const LBOUNDTYPE = 1 # 0 if use POSTOL as lower bound, 1 if use 0.1*loworder
@@ -283,11 +278,8 @@ const BCFLUXTYPE = 2 # 0 - Central, 1 - Nondissipative, 2 - dissipative
 const TOL = 1e-14
 const POSTOL = 1e-14
 const Nc = 4 # number of components
-const GIFINT = 100
 const SAVEINT = 100
-const USEPLOTPT = false
-const NUMPLOTPT = 12
-const USEJLPLOT = false
+const USEPLOTPT = true
 
 const γ = 1.4
 const Re = 1000
@@ -300,23 +292,20 @@ const kappa = mu*cp/Pr
 
 "Approximation parameters"
 const N = 2
-const K1D = 40
-const T = 1.0
-const dt0 = 1e+1
-const CFL = 0.9
+const K1D = 20
+const T = 0.6
+const CFL = 0.5
 const NUM_THREADS = Threads.nthreads()
 const BOTTOMRIGHT = N+1
 const TOPRIGHT    = 2*(N+1)
 const TOPLEFT     = 3*(N+1)
 
-@show NUM_THREADS
-
 "Mesh related variables"
 VX, VY, EToV = uniform_quad_mesh(2*K1D,K1D)
-# @. VX = VX*2
-# @. VY = VY
-@. VX = ((VX+1)/2)
-@. VY = ((VY+1)/2)/2
+# @. VX = (VX+1)/2
+# @. VY = (VY+1)/4
+@. VX = (VX+1)/2
+@. VY = ((VY+1)/2)^2/2
 
 rd = init_reference_quad(N,gauss_lobatto_quad(0,0,N))
 "Initialize reference element"
@@ -431,59 +420,63 @@ end
     return iP,kP
 end
 
-@inline function get_consP(U,mapP,Fmask,i,iM,xM,yM,uM,vM,k)
+@inline function get_consP(UP,U,mapP,Fmask,i,iM,xM,yM,uM,vM,k,tid)
     iP,kP = get_infoP(mapP,Fmask,i,k)
 
-    rhoP  = U[1,iP,kP]
-    rhouP = U[2,iP,kP]
-    rhovP = U[3,iP,kP]
-    EP    = U[4,iP,kP]
+    UP[1,tid] = U[1,iP,kP]
+    UP[2,tid] = U[2,iP,kP]
+    UP[3,tid] = U[3,iP,kP]
+    UP[4,tid] = U[4,iP,kP]
 
     if is_wall(i,xM,yM)              # If reflective wall
         if is_vertical_wall(i,xM)
-            rhoP   = U[1,iM,k]
-            uP     = -uM
-            vP     = vM
-            rhouP  = rhoP*uP
-            rhovP  = rhoP*vP
-            EP     = U[4,iM,k]
+            uP        = -uM
+            vP        = vM
+            rhoP      = U[1,iM,k]
+            UP[1,tid] = rhoP
+            UP[2,tid] = rhoP*uP
+            UP[3,tid] = rhoP*vP
+            UP[4,tid] = U[4,iM,k]
         end
         if is_horizontal_wall(i,yM)
-            rhoP   = U[1,iM,k]
-            uP     = uM
-            vP     = -vM
-            rhouP  = rhoP*uP
-            rhovP  = rhoP*vP
-            EP     = U[4,iM,k]
+            uP        = uM
+            vP        = -vM
+            rhoP      = U[1,iM,k]
+            UP[1,tid] = rhoP
+            UP[2,tid] = rhoP*uP
+            UP[3,tid] = rhoP*vP
+            UP[4,tid] = U[4,iM,k]
         end
     end
-
-    return rhoP,rhouP,rhovP,EP
 end
 
-@inline function get_fluxP(f_x,f_y,mapP,Fmask,i,xM,yM,k,rhoP,rhouP,rhovP,EP)
+@inline function get_fluxP(fP,f_x,f_y,mapP,Fmask,i,xM,yM,k,UP,tid)
     iP,kP = get_infoP(mapP,Fmask,i,k)
 
-    fx_1_P = f_x[1,iP,kP]
-    fx_2_P = f_x[2,iP,kP]
-    fx_3_P = f_x[3,iP,kP]
-    fx_4_P = f_x[4,iP,kP]
-    fy_1_P = f_y[1,iP,kP]
-    fy_2_P = f_y[2,iP,kP]
-    fy_3_P = f_y[3,iP,kP]
-    fy_4_P = f_y[4,iP,kP]
+    fP[1,1,tid] = f_x[1,iP,kP]
+    fP[2,1,tid] = f_x[2,iP,kP]
+    fP[3,1,tid] = f_x[3,iP,kP]
+    fP[4,1,tid] = f_x[4,iP,kP]
+    fP[1,2,tid] = f_y[1,iP,kP]
+    fP[2,2,tid] = f_y[2,iP,kP]
+    fP[3,2,tid] = f_y[3,iP,kP]
+    fP[4,2,tid] = f_y[4,iP,kP]
 
     if is_wall(i,xM,yM)              # If reflective wall
+        rhoP  = UP[1,tid]
+        rhouP = UP[2,tid]
+        rhovP = UP[3,tid]
+        EP    = UP[4,tid]
         uP = rhouP/rhoP
         vP = rhovP/rhoP
         pP = pfun(rhoP,rhouP,rhovP,EP)
-        fx_1_P,fx_2_P,fx_3_P,fx_4_P,fy_1_P,fy_2_P,fy_3_P,fy_4_P = inviscid_flux_prim(rhoP,uP,vP,pP)
+        fP[1,1,tid],fP[2,1,tid],fP[3,1,tid],fP[4,1,tid],
+        fP[1,2,tid],fP[2,2,tid],fP[3,2,tid],fP[4,2,tid] = inviscid_flux_prim(rhoP,uP,vP,pP)
     end
-
-    return fx_1_P,fx_2_P,fx_3_P,fx_4_P,fy_1_P,fy_2_P,fy_3_P,fy_4_P
 end
 
-@inline function get_vP(VU,mapP,Fmask,i,iM,xM,yM,k)
+# TODO: add ! to function names 
+@inline function get_vP(VU,mapP,Fmask,i,iM,xM,yM,k)  # TODO: preallocation
     iP,kP = get_infoP(mapP,Fmask,i,k)
 
     v1P = VU[1,iP,kP]
@@ -517,60 +510,57 @@ end
     return v1P,v2P,v3P,v4P
 end
 
-@inline function get_sigmaP(sigma_x,sigma_y,i,iM,xM,yM,k,mapP,Fmask)
+@inline function get_sigmaP(sigmaP,sigma_x,sigma_y,i,iM,xM,yM,k,mapP,Fmask,tid)
     iP,kP = get_infoP(mapP,Fmask,i,k)
-    sigmax_1_P = 0.0
-    sigmax_2_P = sigma_x[2,iP,kP]
-    sigmax_3_P = sigma_x[3,iP,kP]
-    sigmax_4_P = sigma_x[4,iP,kP]
-    sigmay_1_P = 0.0
-    sigmay_2_P = sigma_y[2,iP,kP]
-    sigmay_3_P = sigma_y[3,iP,kP]
-    sigmay_4_P = sigma_y[4,iP,kP]
+    sigmaP[1,1,tid] = 0.0
+    sigmaP[2,1,tid] = sigma_x[2,iP,kP]
+    sigmaP[3,1,tid] = sigma_x[3,iP,kP]
+    sigmaP[4,1,tid] = sigma_x[4,iP,kP]
+    sigmaP[1,2,tid] = 0.0
+    sigmaP[2,2,tid] = sigma_y[2,iP,kP]
+    sigmaP[3,2,tid] = sigma_y[3,iP,kP]
+    sigmaP[4,2,tid] = sigma_y[4,iP,kP]
 
     if is_wall(i,xM,yM)
         if is_vertical_wall(i,xM)
-            sigmax_1_P =  0.0
-            sigmax_2_P =  sigma_x[2,iM,k]
-            sigmax_3_P =  sigma_x[3,iM,k]
-            sigmax_4_P = -sigma_x[4,iM,k]
-            sigmay_1_P =  0.0
-            sigmay_2_P =  sigma_y[2,iM,k]
-            sigmay_3_P =  sigma_y[3,iM,k]
-            sigmay_4_P = -sigma_y[4,iM,k]
+            sigmaP[1,1,tid] =  0.0
+            sigmaP[2,1,tid] =  sigma_x[2,iM,k]
+            sigmaP[3,1,tid] =  sigma_x[3,iM,k]
+            sigmaP[4,1,tid] = -sigma_x[4,iM,k]
+            sigmaP[1,2,tid] =  0.0
+            sigmaP[2,2,tid] =  sigma_y[2,iM,k]
+            sigmaP[3,2,tid] =  sigma_y[3,iM,k]
+            sigmaP[4,2,tid] = -sigma_y[4,iM,k]
         end
         if is_horizontal_wall(i,yM)
             if is_top_wall(i,yM)    # Top reflective
-                sigmax_1_P =  0.0
-                sigmax_2_P = -sigma_x[2,iM,k]
-                sigmax_3_P =  sigma_x[3,iM,k]
-                sigmax_4_P = -sigma_x[4,iM,k]
-                sigmay_1_P =  0.0
-                sigmay_2_P = -sigma_y[2,iM,k]
-                sigmay_3_P =  sigma_y[3,iM,k]
-                sigmay_4_P = -sigma_y[4,iM,k]
+                sigmaP[1,1,tid] =  0.0
+                sigmaP[2,1,tid] = -sigma_x[2,iM,k]
+                sigmaP[3,1,tid] =  sigma_x[3,iM,k]
+                sigmaP[4,1,tid] = -sigma_x[4,iM,k]
+                sigmaP[1,2,tid] =  0.0
+                sigmaP[2,2,tid] = -sigma_y[2,iM,k]
+                sigmaP[3,2,tid] =  sigma_y[3,iM,k]
+                sigmaP[4,2,tid] = -sigma_y[4,iM,k]
             end
             if is_bottom_wall(i,yM)
-                sigmax_1_P =  0.0
-                sigmax_2_P =  sigma_x[2,iM,k]
-                sigmax_3_P =  sigma_x[3,iM,k]
-                sigmax_4_P = -sigma_x[4,iM,k]
-                sigmay_1_P =  0.0
-                sigmay_2_P =  sigma_y[2,iM,k]
-                sigmay_3_P =  sigma_y[3,iM,k]
-                sigmay_4_P = -sigma_y[4,iM,k]
+                sigmaP[1,1,tid] =  0.0
+                sigmaP[2,1,tid] =  sigma_x[2,iM,k]
+                sigmaP[3,1,tid] =  sigma_x[3,iM,k]
+                sigmaP[4,1,tid] = -sigma_x[4,iM,k]
+                sigmaP[1,2,tid] =  0.0
+                sigmaP[2,2,tid] =  sigma_y[2,iM,k]
+                sigmaP[3,2,tid] =  sigma_y[3,iM,k]
+                sigmaP[4,2,tid] = -sigma_y[4,iM,k]
             end
         end
     end
-
-    return sigmax_1_P,sigmax_2_P,sigmax_3_P,sigmax_4_P,sigmay_1_P,sigmay_2_P,sigmay_3_P,sigmay_4_P
 end
 
-@inline function get_valP(U,f_x,f_y,mapP,Fmask,i,iM,xM,yM,uM,vM,k)
-    rhoP,rhouP,rhovP,EP = get_consP(U,mapP,Fmask,i,iM,xM,yM,uM,vM,k)
-    fx_1_P,fx_2_P,fx_3_P,fx_4_P,fy_1_P,fy_2_P,fy_3_P,fy_4_P = get_fluxP(f_x,f_y,mapP,Fmask,i,xM,yM,k,rhoP,rhouP,rhovP,EP)
-    sigmax_1_P,sigmax_2_P,sigmax_3_P,sigmax_4_P,sigmay_1_P,sigmay_2_P,sigmay_3_P,sigmay_4_P = get_sigmaP(sigma_x,sigma_y,i,iM,xM,yM,k,mapP,Fmask)
-    return rhoP,rhouP,rhovP,EP,fx_1_P,fx_2_P,fx_3_P,fx_4_P,fy_1_P,fy_2_P,fy_3_P,fy_4_P,sigmax_1_P,sigmax_2_P,sigmax_3_P,sigmax_4_P,sigmay_1_P,sigmay_2_P,sigmay_3_P,sigmay_4_P
+@inline function get_valP(UP,fP,sigmaP,U,f_x,f_y,sigma_x,sigma_y,mapP,Fmask,i,iM,xM,yM,uM,vM,k,tid)
+    get_consP(UP,U,mapP,Fmask,i,iM,xM,yM,uM,vM,k,tid)
+    get_fluxP(fP,f_x,f_y,mapP,Fmask,i,xM,yM,k,UP,tid)
+    get_sigmaP(sigmaP,sigma_x,sigma_y,i,iM,xM,yM,k,mapP,Fmask,tid)
 end
 
 @inline function is_face_x(i)
@@ -684,102 +674,97 @@ end
 end
 
 function compute_sigma(prealloc,ops,geom)
-    f_x,f_y,sigma_x,sigma_y,VU,rholog,betalog,U_low,U_high,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr,L_plot = prealloc
-    S0xJ_vec,S0yJ_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,SxJ_db_vec,SyJ_db_vec,Sr_nnzi,Sr_nnzj,Ss_nnzi,Ss_nnzj,MJ_inv,BrJ_halved,BsJ_halved,coeff_arr,S_nnzi,S_nnzj = ops
-    mapP,Fmask,x,y = geom
+    f_x,f_y,theta_x,theta_y,sigma_x,sigma_y,VU,rholog,betalog,U_low,U_high,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr,L_plot,Kxx,Kyy,Kxy,UP,fP,sigmaP = prealloc
+    S0r_vec,S0s_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,
+    Sr_vec,Ss_vec,Sr_nnzi,Sr_nnzj,Ss_nnzi,Ss_nnzj,
+    Minv,Br_halved,Bs_halved,S_nnzi,S_nnzj = ops
+    mapP,Fmask,x,y,rxJ,syJ,J,sJ = geom
 
     @batch for k = 1:K
-        sigma_x[1,:,k] = rxJ*Qr*VU[1,:,k]
-        sigma_x[2,:,k] = rxJ*Qr*VU[2,:,k]
-        sigma_x[3,:,k] = rxJ*Qr*VU[3,:,k]
-        sigma_x[4,:,k] = rxJ*Qr*VU[4,:,k]
+        J_k   = J[1,k]
+        rxJ_k = rxJ[1,k]
+        syJ_k = syJ[1,k]
 
-        sigma_y[1,:,k] = syJ*Qs*VU[1,:,k]
-        sigma_y[2,:,k] = syJ*Qs*VU[2,:,k]
-        sigma_y[3,:,k] = syJ*Qs*VU[3,:,k]
-        sigma_y[4,:,k] = syJ*Qs*VU[4,:,k]
+        tid = Threads.threadid()
+        for i = 1:Np
+            for c = 1:Nc
+                theta_x[c,i,k] = 0.0
+                theta_y[c,i,k] = 0.0
+                sigma_x[c,i,k] = 0.0
+                sigma_y[c,i,k] = 0.0
+            end
+        end
+
+        for c_r = 1:Sr_nnz_hv
+            i = Sr_nnzi[c_r]
+            j = Sr_nnzj[c_r]
+            for c = 1:Nc
+                theta_x[c,i,k] = theta_x[c,i,k] + rxJ_k*Sr_vec[c_r]*VU[c,j,k]
+                theta_x[c,j,k] = theta_x[c,j,k] - rxJ_k*Sr_vec[c_r]*VU[c,i,k]
+            end
+        end
+
+        for c_s = 1:Ss_nnz_hv
+            i = Ss_nnzi[c_s]
+            j = Ss_nnzj[c_s]
+            for c = 1:Nc
+                theta_y[c,i,k] = theta_y[c,i,k] + syJ_k*Ss_vec[c_s]*VU[c,j,k]
+                theta_y[c,j,k] = theta_y[c,j,k] - syJ_k*Ss_vec[c_s]*VU[c,i,k]
+            end
+        end
+
         for i = 1:Nfp
+            sJ_ik  = sJ[i,k]
             iM = Fmask[i]
             xM = x[iM,k]
             yM = y[iM,k]
-            v1M = VU[1,iM,k]
-            v2M = VU[2,iM,k]
-            v3M = VU[3,iM,k]
-            v4M = VU[4,iM,k]
-
             v1P,v2P,v3P,v4P = get_vP(VU,mapP,Fmask,i,iM,xM,yM,k)
 
             if is_face_x(i)
-                BrJ_ii_halved = BrJ_halved[iM]
-                sigma_x[1,iM,k] = sigma_x[1,iM,k]+ BrJ_ii_halved*(-v1M+v1P)
-                sigma_x[2,iM,k] = sigma_x[2,iM,k]+ BrJ_ii_halved*(-v2M+v2P)
-                sigma_x[3,iM,k] = sigma_x[3,iM,k]+ BrJ_ii_halved*(-v3M+v3P)
-                sigma_x[4,iM,k] = sigma_x[4,iM,k]+ BrJ_ii_halved*(-v4M+v4P)
-            end                                                           
-                                                                          
-            if is_face_y(i)                                               
-                BsJ_ii_halved = BsJ_halved[iM]                            
-                sigma_y[1,iM,k] = sigma_y[1,iM,k]+ BsJ_ii_halved*(-v1M+v1P)
-                sigma_y[2,iM,k] = sigma_y[2,iM,k]+ BsJ_ii_halved*(-v2M+v2P)
-                sigma_y[3,iM,k] = sigma_y[3,iM,k]+ BsJ_ii_halved*(-v3M+v3P)
-                sigma_y[4,iM,k] = sigma_y[4,iM,k]+ BsJ_ii_halved*(-v4M+v4P)
+                BrJ_ii_halved = sJ_ik*Br_halved[iM]
+                theta_x[1,iM,k] = theta_x[1,iM,k]+ BrJ_ii_halved*(v1P)
+                theta_x[2,iM,k] = theta_x[2,iM,k]+ BrJ_ii_halved*(v2P)
+                theta_x[3,iM,k] = theta_x[3,iM,k]+ BrJ_ii_halved*(v3P)
+                theta_x[4,iM,k] = theta_x[4,iM,k]+ BrJ_ii_halved*(v4P)
+            end                                                      
+                                                                     
+            if is_face_y(i)                                          
+                BsJ_ii_halved = sJ_ik*Bs_halved[iM]                       
+                theta_y[1,iM,k] = theta_y[1,iM,k]+ BsJ_ii_halved*(v1P)
+                theta_y[2,iM,k] = theta_y[2,iM,k]+ BsJ_ii_halved*(v2P)
+                theta_y[3,iM,k] = theta_y[3,iM,k]+ BsJ_ii_halved*(v3P)
+                theta_y[4,iM,k] = theta_y[4,iM,k]+ BsJ_ii_halved*(v4P)
             end
 
         end
 
         for i = 1:Np
-            mJ_inv_ii = MJ_inv[i]
+            mJ_inv_ii = Minv[i]/J_k
             for c = 1:Nc
-                sigma_x[c,i,k] = mJ_inv_ii*sigma_x[c,i,k]
-                sigma_y[c,i,k] = mJ_inv_ii*sigma_y[c,i,k]
+                theta_x[c,i,k] = mJ_inv_ii*theta_x[c,i,k]
+                theta_y[c,i,k] = mJ_inv_ii*theta_y[c,i,k]
             end
         end
 
         for i = 1:Np
-            v1 = VU[1,i,k]
-            v2 = VU[2,i,k]
-            v3 = VU[3,i,k]
-            v4 = VU[4,i,k]
-            theta1_1 = sigma_x[1,i,k]
-            theta1_2 = sigma_x[2,i,k]
-            theta1_3 = sigma_x[3,i,k]
-            theta1_4 = sigma_x[4,i,k]
-            theta2_1 = sigma_y[1,i,k]
-            theta2_2 = sigma_y[2,i,k]
-            theta2_3 = sigma_y[3,i,k]
-            theta2_4 = sigma_y[4,i,k]
-
-            Kxx,Kxy,Kyy = get_Kvisc(v1,v2,v3,v4)
-            Kyx = Kxy'
-            thetax_vec = [theta1_1; theta1_2; theta1_3; theta1_4]
-            thetay_vec = [theta2_1; theta2_2; theta2_3; theta2_4]
-            sigma1_tmp = Kxx*thetax_vec+Kxy*thetay_vec
-            sigma2_tmp = Kyx*thetax_vec+Kyy*thetay_vec
-
-            sigma1_2 = sigma1_tmp[2]
-            sigma1_3 = sigma1_tmp[3]
-            sigma1_4 = sigma1_tmp[4]
-            sigma2_2 = sigma2_tmp[2]
-            sigma2_3 = sigma2_tmp[3]
-            sigma2_4 = sigma2_tmp[4]
-
-            sigma_x[1,i,k] = 0.0
-            sigma_x[2,i,k] = sigma1_2
-            sigma_x[3,i,k] = sigma1_3
-            sigma_x[4,i,k] = sigma1_4
-            sigma_y[1,i,k] = 0.0 
-            sigma_y[2,i,k] = sigma2_2
-            sigma_y[3,i,k] = sigma2_3
-            sigma_y[4,i,k] = sigma2_4 
+            get_Kvisc(Kxx,Kyy,Kxy,tid,VU[1,i,k],VU[2,i,k],VU[3,i,k],VU[4,i,k])
+            for ci = 2:Nc
+                for cj = 2:Nc
+                    sigma_x[ci,i,k] = sigma_x[ci,i,k] + Kxx[tid][ci,cj]*theta_x[cj,i,k] + Kxy[tid][ci,cj]*theta_y[cj,i,k]
+                    sigma_y[ci,i,k] = sigma_y[ci,i,k] + Kxy[tid][cj,ci]*theta_x[cj,i,k] + Kyy[tid][ci,cj]*theta_y[cj,i,k]
+                end
+            end
         end
     end
  
 end
 
-function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
-    f_x,f_y,sigma_x,sigma_y,VU,rholog,betalog,U_low,U_high,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr,L_plot = prealloc
-    S0xJ_vec,S0yJ_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,SxJ_db_vec,SyJ_db_vec,Sr_nnzi,Sr_nnzj,Ss_nnzi,Ss_nnzj,MJ_inv,BrJ_halved,BsJ_halved,coeff_arr,S_nnzi,S_nnzj = ops
-    mapP,Fmask,x,y = geom
+function rhs_IDP!(U,rhsU,t,dtl,prealloc,ops,geom,in_s1)
+    f_x,f_y,theta_x,theta_y,sigma_x,sigma_y,VU,rholog,betalog,U_low,U_high,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr,L_plot,Kxx,Kyy,Kxy,UP,fP,sigmaP = prealloc
+    S0r_vec,S0s_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,
+    Sr_vec,Ss_vec,Sr_nnzi,Sr_nnzj,Ss_nnzi,Ss_nnzj,
+    Minv,Br_halved,Bs_halved,S_nnzi,S_nnzj = ops
+    mapP,Fmask,x,y,rxJ,syJ,J,sJ = geom
 
     fill!(rhsU,0.0)
     @batch for k = 1:K
@@ -811,23 +796,39 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
     
     # Precompute wavespeeds
     @batch for k = 1:K
+        rxJ_k = rxJ[1,k]
+        syJ_k = syJ[1,k]
         tid = Threads.threadid()
 
         # Interior wavespd, leading 2 - x and y directions 
         for i = 1:Np
-            rho_i  = U[1,i,k]
-            rhou_i = U[2,i,k]
-            rhov_i = U[3,i,k]
-            E_i    = U[4,i,k]
-            wspd_arr[i,1,k] = wavespeed_1D(rho_i,rhou_i,E_i)
-            wspd_arr[i,2,k] = wavespeed_1D(rho_i,rhov_i,E_i)
+            rho_i    = U[1,i,k]
+            rhou_i   = U[2,i,k]
+            rhov_i   = U[3,i,k]
+            E_i      = U[4,i,k]
+            sigma1_2 = sigma_x[2,i,k]
+            sigma1_3 = sigma_x[3,i,k]
+            sigma1_4 = sigma_x[4,i,k]
+            sigma2_2 = sigma_y[2,i,k]
+            sigma2_3 = sigma_y[3,i,k]
+            sigma2_4 = sigma_y[4,i,k]
+            wspd_arr[i,1,k] = max(zhang_wavespd(rho_i,rhou_i,rhov_i,E_i,
+                                                sigma1_2,sigma1_3,sigma1_4,
+                                                sigma2_2,sigma2_3,sigma2_4,
+                                                1,0),
+                                  wavespeed_1D(rho_i,rhou_i,E_i))#wavespeed_1D(rho_i,rhou_i,E_i)
+            wspd_arr[i,2,k] = max(zhang_wavespd(rho_i,rhou_i,rhov_i,E_i,
+                                                sigma1_2,sigma1_3,sigma1_4,
+                                                sigma2_2,sigma2_3,sigma2_4,
+                                                0,1),
+                                  wavespeed_1D(rho_i,rhov_i,E_i))#wavespeed_1D(rho_i,rhov_i,E_i)
         end
 
         # Interior dissipation coeff
         for c_r = 1:S0r_nnz_hv
             i = S0r_nnzi[c_r]
             j = S0r_nnzj[c_r]
-            λ = abs(S0xJ_vec[c_r])*max(wspd_arr[i,1,k],wspd_arr[j,1,k])
+            λ = abs(rxJ_k*S0r_vec[c_r])*max(wspd_arr[i,1,k],wspd_arr[j,1,k])
             λ_arr[c_r,1,k] = λ
             if in_s1
                 dii_arr[i,k] = dii_arr[i,k] + λ
@@ -837,7 +838,7 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
         for c_s = 1:S0s_nnz_hv
             i = S0s_nnzi[c_s]
             j = S0s_nnzj[c_s]
-            λ = abs(S0yJ_vec[c_s])*max(wspd_arr[i,2,k],wspd_arr[j,2,k])
+            λ = abs(syJ_k*S0s_vec[c_s])*max(wspd_arr[i,2,k],wspd_arr[j,2,k])
             λ_arr[c_s,2,k] = λ
             if in_s1
                 dii_arr[i,k] = dii_arr[i,k] + λ
@@ -848,9 +849,10 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
     # Interface dissipation coeff 
     @batch for k = 1:K
         for i = 1:Nfp
+            sJ_ik  = sJ[i,k]
             iM = Fmask[i]
-            BrJ_ii_halved_abs = abs(BrJ_halved[iM])
-            BsJ_ii_halved_abs = abs(BsJ_halved[iM])
+            BrJ_ii_halved_abs = abs(sJ_ik*Br_halved[iM])
+            BsJ_ii_halved_abs = abs(sJ_ik*Bs_halved[iM])
             xM    = x[iM,k]
             yM    = y[iM,k]
 
@@ -889,17 +891,21 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
     # If at the first stage, calculate the time step
     if in_s1
         for k = 1:K
+        J_k   = J[1,k]
             for i = 1:Np
-                dt = min(dt,1.0/MJ_inv[i]/2.0/dii_arr[i,k])
+                dtl = min(dtl,1.0/Minv[i]/2.0/dii_arr[i,k]*J_k)
             end
         end
-        dt = min(CFL*dt,T-t)
+        dtl = min(CFL*dtl,T-t)
     end
 
     # =====================
     # Loop through elements
     # =====================
     @batch for k = 1:K
+        J_k   = J[1,k]
+        rxJ_k = rxJ[1,k]
+        syJ_k = syJ[1,k]
         tid = Threads.threadid()
         for i = 1:Np
             for c = 1:Nc
@@ -913,7 +919,7 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
             i = S0r_nnzi[c_r]
             j = S0r_nnzj[c_r]
             λ = λ_arr[c_r,1,k]
-            S0xJ_ij = S0xJ_vec[c_r]
+            S0xJ_ij = rxJ_k*S0r_vec[c_r]
             update_F_low!(F_low,k,tid,i,j,λ,S0xJ_ij,U,f_x,sigma_x)
         end
 
@@ -921,7 +927,7 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
             i = S0s_nnzi[c_s]
             j = S0s_nnzj[c_s]
             λ = λ_arr[c_s,2,k]
-            S0yJ_ij = S0yJ_vec[c_s]
+            S0yJ_ij = syJ_k*S0s_vec[c_s]
             update_F_low!(F_low,k,tid,i,j,λ,S0yJ_ij,U,f_y,sigma_y)
         end
 
@@ -929,22 +935,23 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
         for c_r = 1:Sr_nnz_hv
             i         = Sr_nnzi[c_r]
             j         = Sr_nnzj[c_r]
-            SxJ_ij_db = SxJ_db_vec[c_r]
+            SxJ_ij_db = 2*rxJ_k*Sr_vec[c_r]
             update_F_high!(F_high,k,tid,i,j,SxJ_ij_db,U,rholog,betalog,0,sigma_x)
         end
 
-        for c_r = 1:Sr_nnz_hv
+        for c_r = 1:Ss_nnz_hv
             i         = Ss_nnzi[c_r]
             j         = Ss_nnzj[c_r]
-            SyJ_ij_db = SyJ_db_vec[c_r]
+            SyJ_ij_db = 2*syJ_k*Ss_vec[c_r]
             update_F_high!(F_high,k,tid,i,j,SyJ_ij_db,U,rholog,betalog,1,sigma_y)
         end
 
         # Calculate interface fluxes
         for i = 1:Nfp
+            sJ_ik  = sJ[i,k]
             iM    = Fmask[i]
-            BrJ_ii_halved = BrJ_halved[iM]
-            BsJ_ii_halved = BsJ_halved[iM]
+            BrJ_ii_halved = sJ_ik*Br_halved[iM]
+            BsJ_ii_halved = sJ_ik*Bs_halved[iM]
             xM    = x[iM,k]
             yM    = y[iM,k]
             rhoM  = U[1,iM,k]
@@ -954,49 +961,24 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
             uM    = rhouM/rhoM
             vM    = rhovM/rhoM
             pM    = pfun(rhoM,rhouM,rhovM,EM)
-            fx_1_M = f_x[1,iM,k]
-            fx_2_M = f_x[2,iM,k]
-            fx_3_M = f_x[3,iM,k]
-            fx_4_M = f_x[4,iM,k]
-            fy_1_M = f_y[1,iM,k]
-            fy_2_M = f_y[2,iM,k]
-            fy_3_M = f_y[3,iM,k]
-            fy_4_M = f_y[4,iM,k]
 
-            sigmax_1_M = sigma_x[1,iM,k]
-            sigmax_2_M = sigma_x[2,iM,k]
-            sigmax_3_M = sigma_x[3,iM,k]
-            sigmax_4_M = sigma_x[4,iM,k]
-            sigmay_1_M = sigma_y[1,iM,k]
-            sigmay_2_M = sigma_y[2,iM,k]
-            sigmay_3_M = sigma_y[3,iM,k]
-            sigmay_4_M = sigma_y[4,iM,k]
-
-            rhoP,rhouP,rhovP,EP,fx_1_P,fx_2_P,fx_3_P,fx_4_P,fy_1_P,fy_2_P,fy_3_P,fy_4_P,sigmax_1_P,sigmax_2_P,sigmax_3_P,sigmax_4_P,sigmay_1_P,sigmay_2_P,sigmay_3_P,sigmay_4_P = get_valP(U,f_x,f_y,mapP,Fmask,i,iM,xM,yM,uM,vM,k)
+            get_valP(UP,fP,sigmaP,U,f_x,f_y,sigma_x,sigma_y,mapP,Fmask,i,iM,xM,yM,uM,vM,k,tid)
             λ = λf_arr[i,k]
 
             # flux in x direction
             if is_face_x(i)
-                F_P[1,i,tid] = (BrJ_ii_halved*(fx_1_M+fx_1_P-sigmax_1_M-sigmax_1_P)
-                               -λ*(rhoP-rhoM) )
-                F_P[2,i,tid] = (BrJ_ii_halved*(fx_2_M+fx_2_P-sigmax_2_M-sigmax_2_P)
-                               -λ*(rhouP-rhouM) )
-                F_P[3,i,tid] = (BrJ_ii_halved*(fx_3_M+fx_3_P-sigmax_3_M-sigmax_3_P)
-                               -λ*(rhovP-rhovM) )
-                F_P[4,i,tid] = (BrJ_ii_halved*(fx_4_M+fx_4_P-sigmax_4_M-sigmax_4_P)
-                               -λ*(EP-EM) )
+                for c = 1:Nc
+                    F_P[c,i,tid] = (BrJ_ii_halved*(f_x[c,iM,k]+fP[c,1,tid]-sigma_x[c,iM,k]-sigmaP[c,1,tid])
+                                   -λ*(UP[c,tid]-U[c,iM,k]) ) 
+                end
             end
 
             # flux in y direction
             if is_face_y(i)
-                F_P[1,i,tid] = (BsJ_ii_halved*(fy_1_M+fy_1_P-sigmay_1_M-sigmay_1_P)
-                               -λ*(rhoP-rhoM) )
-                F_P[2,i,tid] = (BsJ_ii_halved*(fy_2_M+fy_2_P-sigmay_2_M-sigmay_2_P)
-                               -λ*(rhouP-rhouM) )
-                F_P[3,i,tid] = (BsJ_ii_halved*(fy_3_M+fy_3_P-sigmay_3_M-sigmay_3_P)
-                               -λ*(rhovP-rhovM) )
-                F_P[4,i,tid] = (BsJ_ii_halved*(fy_4_M+fy_4_P-sigmay_4_M-sigmay_4_P)
-                               -λ*(EP-EM) )
+                for c = 1:Nc
+                    F_P[c,i,tid] = (BsJ_ii_halved*(f_y[c,iM,k]+fP[c,2,tid]-sigma_y[c,iM,k]-sigmaP[c,2,tid])
+                                   -λ*(UP[c,tid]-U[c,iM,k]) ) 
+                end
             end
 
             if (BCFLUXTYPE >= 1)
@@ -1031,18 +1013,16 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
 
                     # flux in x direction
                     if is_face_x(i)
-                        F_P[1,i,tid] -= BrJ_ii_halved*(sigmax_1_M+sigmax_1_P)
-                        F_P[2,i,tid] -= BrJ_ii_halved*(sigmax_2_M+sigmax_2_P)
-                        F_P[3,i,tid] -= BrJ_ii_halved*(sigmax_3_M+sigmax_3_P)
-                        F_P[4,i,tid] -= BrJ_ii_halved*(sigmax_4_M+sigmax_4_P)
+                        for c = 1:Nc
+                            F_P[c,i,tid] -= BrJ_ii_halved*(sigma_x[c,iM,k]+sigmaP[c,1,tid]) 
+                        end
                     end
 
                     # flux in y direction
                     if is_face_y(i)
-                        F_P[1,i,tid] -= BsJ_ii_halved*(sigmay_1_M+sigmay_1_P)
-                        F_P[2,i,tid] -= BsJ_ii_halved*(sigmay_2_M+sigmay_2_P)
-                        F_P[3,i,tid] -= BsJ_ii_halved*(sigmay_3_M+sigmay_3_P)
-                        F_P[4,i,tid] -= BsJ_ii_halved*(sigmay_4_M+sigmay_4_P)
+                        for c = 1:Nc
+                            F_P[c,i,tid] -= BsJ_ii_halved*(sigma_y[c,iM,k]+sigmaP[c,2,tid]) 
+                        end
                     end
                 end
             end
@@ -1068,8 +1048,8 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
 
         for i = 1:Np
             for c = 1:Nc
-                U_low[c,i,tid]  = U[c,i,k] - dt*MJ_inv[i]*U_low[c,i,tid]
-                U_high[c,i,tid] = U[c,i,k] - dt*MJ_inv[i]*U_high[c,i,tid]
+                U_low[c,i,tid]  = U[c,i,k] - dtl*Minv[i]*U_low[c,i,tid]/J_k
+                U_high[c,i,tid] = U[c,i,k] - dtl*Minv[i]*U_high[c,i,tid]/J_k
             end
         end
 
@@ -1095,8 +1075,8 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
                 for ni = 1:S_nnz_hv
                     i = S_nnzi[ni]
                     j = S_nnzj[ni]
-                    coeff_i = dt*coeff_arr[i]
-                    coeff_j = dt*coeff_arr[j]
+                    coeff_i = dtl*2*N*Minv[i]/J_k
+                    coeff_j = dtl*2*N*Minv[j]/J_k
                     rhoi  = U_low[1,i,tid]
                     rhoui = U_low[2,i,tid]
                     rhovi = U_low[3,i,tid]
@@ -1135,7 +1115,7 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
                 rhouP_i = 0.0
                 rhovP_i = 0.0
                 EP_i    = 0.0
-                coeff   = dt*MJ_inv[i]
+                coeff   = dtl*Minv[i]/J_k
                 for j = 1:Np
                     rhoP   = (F_low[1,i,j,tid]-F_high[1,i,j,tid])
                     rhouP  = (F_low[2,i,j,tid]-F_high[2,i,j,tid])
@@ -1186,10 +1166,6 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
                 FH_ij = F_high[c,i,j,tid]
                 rhsU[c,i,k] = rhsU[c,i,k] + l_em1*FL_ij - l_e*FH_ij
                 rhsU[c,j,k] = rhsU[c,j,k] - l_em1*FL_ij + l_e*FH_ij
-                # l_e   = L[ni,tid]
-                # l_em1 = L[ni,tid]-1.0 
-                # rhsU[c,i,k] = rhsU[c,i,k] + l_em1*FL_ij - l_e*FH_ij
-                # rhsU[c,j,k] = rhsU[c,j,k] - l_em1*FL_ij + l_e*FH_ij
             end
         end
 
@@ -1202,16 +1178,17 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
     end
 
     @batch for k = 1:K
+        J_k   = J[1,k]
         for i = 1:Np
             for c = 1:Nc
-                rhsU[c,i,k] = MJ_inv[i]*rhsU[c,i,k]
+                rhsU[c,i,k] = Minv[i]*rhsU[c,i,k]/J_k
             end
         end
     end
 
-    @show sum(L_plot)/K
+    # @show sum(L_plot)/K
 
-    return dt
+    return dtl
 end
 
 @unpack Vf,Dr,Ds,LIFT = rd
@@ -1224,7 +1201,7 @@ const Nfaces = 4
 
 # Make domain periodic
 @unpack Vf = rd
-@unpack xf,yf,mapM,mapP,mapB = md
+@unpack xf,yf,mapM,mapP,mapB,J,rxJ,syJ,sJ = md
 LX,LY = (x->maximum(x)-minimum(x)).((VX,VY)) # find lengths of domain
 mapPB = build_periodic_boundary_maps(xf,yf,LX,LY,Nfaces*K,mapM,mapP,mapB)
 mapP[mapB] = mapPB
@@ -1232,15 +1209,6 @@ mapP[mapB] = mapPB
 
 const Np = (N+1)*(N+1)
 const Nfp = Nfaces*(N+1)
-const J   = 1.0/K1D/K1D/16
-const Jf  = 1.0/K1D/4
-const rxJ = 1/Jf*J#2*K1D*J
-const syJ = 1/Jf*J#2*K1D*J
-const sJ  = Jf
-const rxJ_sq = rxJ^2
-const syJ_sq = syJ^2
-const rxJ_db = 2*rxJ
-const syJ_db = 2*syJ
 
 # Convert diagonal matrices to vectors
 Br   = Array(diag(Br))
@@ -1248,10 +1216,8 @@ Bs   = Array(diag(Bs))
 M    = Array(diag(M))
 Minv = Array(diag(Minv))
 
-MJ_inv    = Minv./J
 Br_halved = -sum(S0r,dims=2)
 Bs_halved = -sum(S0s,dims=2)
-coeff_arr = 2*N*MJ_inv
 
 Fmask  = [1:N+1; (N+1):(N+1):Np; Np:-1:Np-N; Np-N:-(N+1):1]
 Fxmask = [(N+2):(2*N+2); (3*N+4):(4*N+4)]
@@ -1326,30 +1292,23 @@ for j = 2:Np
     end
 end
 
-# Scale by Jacobian
-S0xJ_vec   = rxJ*S0r_vec
-S0yJ_vec   = syJ*S0s_vec
-SxJ_db_vec = 2*rxJ*Sr_vec
-SyJ_db_vec = 2*syJ*Ss_vec
-BrJ_halved = Jf*Br_halved
-BsJ_halved = Jf*Bs_halved
 
 # Initial condition 2D shocktube
-function initial_cond(x,y,t)
+function initial_cond(xi,yi,t)
 
-    if (x < 0.5)
-        rho = 120.0
-        u   = 0.0
-        v   = 0.0
-        p   = rho/γ
+    if (xi < 0.5)
+        rho0 = 120.0
+        u0   = 0.0
+        v0   = 0.0
+        p0   = rho0/γ
     else
-        rho = 1.2
-        u   = 0.0
-        v   = 0.0
-        p   = rho/γ
+        rho0 = 1.2
+        u0   = 0.0
+        v0   = 0.0
+        p0   = rho0/γ
     end
 
-    return (rho, u, v, p)
+    return (rho0, u0, v0, p0)
 end
 
 
@@ -1357,11 +1316,11 @@ end
 U = zeros(Nc,Np,K)
 for k = 1:K
     for i = 1:Np
-        rho,u,v,p = initial_cond(x[i,k],y[i,k],0.0)
-        U[1,i,k] = rho
-        U[2,i,k] = rho*u
-        U[3,i,k] = rho*v
-        U[4,i,k] = Efun(rho,u,v,p)
+        rho0,u0,v0,p0 = initial_cond(x[i,k],y[i,k],0.0)
+        U[1,i,k] = rho0
+        U[2,i,k] = rho0*u0
+        U[3,i,k] = rho0*v0
+        U[4,i,k] = Efun(rho0,u0,v0,p0)
     end
 end
 
@@ -1371,6 +1330,8 @@ f_x    = zeros(Float64,size(U))
 f_y    = zeros(Float64,size(U))
 sigma_x = zeros(Float64,size(U))
 sigma_y = zeros(Float64,size(U))
+theta_x = zeros(Float64,size(U))
+theta_y = zeros(Float64,size(U))
 VU      = zeros(Float64,size(U))
 rholog  = zeros(Float64,Np,K)
 betalog = zeros(Float64,Np,K)
@@ -1379,18 +1340,72 @@ U_high  = zeros(Float64,Nc,Np,NUM_THREADS)
 F_low   = zeros(Float64,Nc,Np,Np,NUM_THREADS)
 F_high  = zeros(Float64,Nc,Np,Np,NUM_THREADS)
 F_P     = zeros(Float64,Nc,Nfp,NUM_THREADS)
+UP      = zeros(Float64,Nc,NUM_THREADS)
+fP      = zeros(Float64,Nc,2,NUM_THREADS)
+sigmaP  = zeros(Float64,Nc,2,NUM_THREADS)
 L       =  ones(Float64,S_nnz_hv,NUM_THREADS)
 wspd_arr = zeros(Float64,Np,2,K)
 λ_arr    = zeros(Float64,S0r_nnz_hv,2,K) # Assume S0r and S0s has same number of nonzero entries
 λf_arr   = zeros(Float64,Nfp,K)
 dii_arr  = zeros(Float64,Np,K)
 L_plot   = zeros(Float64,K)
+Kxx      = [zeros(MMatrix{Nc,Nc,Float64}) for _ in 1:NUM_THREADS]
+Kyy      = [zeros(MMatrix{Nc,Nc,Float64}) for _ in 1:NUM_THREADS]
+Kxy      = [zeros(MMatrix{Nc,Nc,Float64}) for _ in 1:NUM_THREADS]
 
-prealloc = (f_x,f_y,sigma_x,sigma_y,VU,rholog,betalog,U_low,U_high,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr,L_plot)
-ops      = (S0xJ_vec,  S0yJ_vec,  S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,
-            SxJ_db_vec,SyJ_db_vec,Sr_nnzi, Sr_nnzj, Ss_nnzi, Ss_nnzj,
-            MJ_inv,BrJ_halved,BsJ_halved,coeff_arr,S_nnzi,S_nnzj)
-geom     = (mapP,Fmask,x,y)
+prealloc = (f_x,f_y,theta_x,theta_y,sigma_x,sigma_y,VU,rholog,betalog,U_low,U_high,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr,L_plot,Kxx,Kyy,Kxy,UP,fP,sigmaP)
+ops      = (S0r_vec,S0s_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,
+            Sr_vec,Ss_vec,Sr_nnzi,Sr_nnzj,Ss_nnzi,Ss_nnzj,
+            Minv,Br_halved,Bs_halved,S_nnzi,S_nnzj)
+geom     = (mapP,Fmask,x,y,rxJ,syJ,J,sJ)
+
+function schlieren_visualization!(shcl,U,rx,sy)
+    shcl     .= sqrt.((rx.*(Dr*U[1,:,:])).^2 .+ (sy.*(Ds*U[1,:,:])).^2)
+    shcl_min  = minimum(shcl)
+    shcl_max  = maximum(shcl)
+    @. shcl   = exp(-10*(shcl-shcl_min)/(shcl_max-shcl_min))
+end
+
+function construct_vtk_mesh!(x_vtk,y_vtk)
+    # TODO: assume sturctured Mesh
+    for k = 1:K
+        iK = mod1(k,2*K1D)
+        jK = div(k-1,2*K1D)+1
+        xk = reshape(x[:,k],N+1,N+1)
+        yk = reshape(y[:,k],N+1,N+1)
+        x_vtk[(iK-1)*(N+1)+1:iK*(N+1),(jK-1)*(N+1)+1:jK*(N+1)] = xk
+        y_vtk[(iK-1)*(N+1)+1:iK*(N+1),(jK-1)*(N+1)+1:jK*(N+1)] = yk
+    end
+end
+
+function construct_vtk_file!(U,sch,Uvtk,schlvtk,pvdfile,xvtk,yvtk,t)
+    vtk_grid("$(OUTPUTPATH)/dg2D_CNS_quad_shocktube_t=$t",xvtk,yvtk) do vtk
+        for k = 1:K
+            iK = mod1(k,2*K1D)
+            jK = div(k-1,2*K1D)+1
+            for c = 1:Nc
+                Uvtk[c,(iK-1)*(N+1)+1:iK*(N+1),(jK-1)*(N+1)+1:jK*(N+1)] = U[c,:,k]
+            end
+            schlvtk[(iK-1)*(N+1)+1:iK*(N+1),(jK-1)*(N+1)+1:jK*(N+1)] = sch[:,k]
+        end    
+        vtk["rho"]  = Uvtk[1,:,:] 
+        vtk["rhou"] = Uvtk[2,:,:] 
+        vtk["rhov"] = Uvtk[3,:,:] 
+        vtk["E"]    = Uvtk[4,:,:] 
+        vtk["schl"] = schlvtk
+
+        pvdfile[t]  = vtk
+    end
+end
+
+x_vtk    = zeros(Float64,2*(N+1)*K1D,(N+1)*K1D)    # TODO: hardcoded domain size
+y_vtk    = zeros(Float64,2*(N+1)*K1D,(N+1)*K1D)
+U_vtk    = zeros(Float64,Nc,2*(N+1)*K1D,(N+1)*K1D)
+schl_vtk = zeros(Float64,2*(N+1)*K1D,(N+1)*K1D)
+shcl = zeros(Float64,Np,K)
+
+construct_vtk_mesh!(x_vtk,y_vtk)
+pvd = paraview_collection("$(OUTPUTPATH)/dg2D_CNS_quad_shocktube.pvd")
 
 
 # Time stepping
@@ -1399,25 +1414,24 @@ t = 0.0
 U = collect(U)
 resW = zeros(size(U))
 
-#plotting nodes
-@unpack VDM = rd
-rp,sp = equi_nodes_2D(NUMPLOTPT)
-Vp = vandermonde_2D(N,rp,sp)/VDM
-gr(aspect_ratio=:equal,legend=false,
-   markerstrokewidth=0,markersize=2)
-anim = Animation()
-
-xp   = Vp*x
-yp   = Vp*y
-
 dt_hist = []
 i = 1
-Uhist = []
-thist = []
+Uhist    = []
+thist    = []
+schlhist = []
+
+# for i = 1:5
+#     dt = dt0
+#     @btime rhs_IDP!($U,$rhsU,$t,$dt,$prealloc,$ops,$geom,$true);
+# end
 
 # try
-const rx = rxJ/J
-const sy = syJ/J
+
+const dx  = min(minimum([x[end,j]-x[1,j] for j in 1:K]),minimum([y[end,j]-y[1,j] for j in 1:K]))
+const dt0 = CFL*Re*dx^2
+
+rx = rxJ./J
+sy = syJ./J
 @time while t < T
 #while i < 2
     # SSPRK(3,3)
@@ -1439,80 +1453,34 @@ const sy = syJ/J
     println("Current time $t with time step size $dt, and final time $T, at step $i")
     flush(stdout)
     global i = i + 1
-    if (USEJLPLOT)
-        if (i % GIFINT == 0)
-            rho = U[1,:,:]
-            rhou = U[2,:,:]
-            rhov = U[3,:,:]
-            u = U[2,:,:]./U[1,:,:]
-            v = U[3,:,:]./U[1,:,:]
-            E = U[4,:,:]
-            vmag = @. u^2 + v^2
-            g   = sqrt.((rx.*(Dr*rho)).^2 .+ (sy.*(Ds*rho)).^2)
-            g_min = minimum(g)
-            g_max = maximum(g)
-            vv = @. exp(-10*(g-g_min)/(g_max-g_min))
-            
-            if (USEPLOTPT)
-                vvp = Vp*vv
-                scatter(xp,yp,vvp,zcolor=vvp,camera=(0,90))
-            else
-                rho = U[1,:,:]
-                scatter(x,y,vv,zcolor=vv,camera=(0,90))
-            end
-            frame(anim)
-        end
-    end
-
     if (i % SAVEINT == 0)
+        schlieren_visualization!(shcl,U,rx,sy)
         push!(Uhist,copy(U))
+        push!(schlhist,copy(shcl))
+        construct_vtk_file!(U,shcl,U_vtk,schl_vtk,pvd,x_vtk,y_vtk,t)
     end
 end
 # catch err
 # end
 
-if (USEJLPLOT)
-    gif(anim,"fig/dg2D_CNS_quad_shocktube/N=$N,K1D=$K1D,T=$T,LIMITOPT=$LIMITOPT,POSDETECT=$POSDETECT,LBOUNDTYPE=$LBOUNDTYPE,BCFLUXTYPE=$BCFLUXTYPE.gif")
+shcl = zeros(Float64,Np,K)
+schlieren_visualization!(shcl,U,rx,sy)
+push!(Uhist,copy(U))
+push!(schlhist,shcl)
+construct_vtk_file!(U,shcl,U_vtk,schl_vtk,pvd,x_vtk,y_vtk,t)
 
-    rho = U[1,:,:]
-    rhou = U[2,:,:]
-    rhov = U[3,:,:]
-    u = U[2,:,:]./U[1,:,:]
-    v = U[3,:,:]./U[1,:,:]
-    E = U[4,:,:]
-    vmag = @. u^2 + v^2
-    g   = sqrt.((rx.*(Dr*rho)).^2 .+ (sy.*(Ds*rho)).^2)
-    g_min = minimum(g)
-    g_max = maximum(g)
-    vv = @. exp(-10*(g-g_min)/(g_max-g_min))
+vtk_save(pvd)
 
-    xp   = Vp*x
-    yp   = Vp*y
-    rhop = Vp*rho
-    vmagp = Vp*vmag
-    vvp = Vp*vv
-    scatter(xp,yp,vvp,zcolor=vvp,camera=(0,90))
-    savefig("fig/dg2D_CNS_quad_shocktube/N=$N,K1D=$K1D,T=$T,LIMITOPT=$LIMITOPT,POSDETECT=$POSDETECT,LBOUNDTYPE=$LBOUNDTYPE,BCFLUXTYPE=$BCFLUXTYPE.png")
-end
-
-open("data/shocktube/N=$N,K1D=$K1D,t=$t,CFL=$CFL,rho,shocktube.txt","w") do io
-    writedlm(io,U[1,:,:])
-end
-open("data/shocktube/N=$N,K1D=$K1D,t=$t,CFL=$CFL,rhou,shocktube.txt","w") do io
-    writedlm(io,U[2,:,:])
-end
-open("data/shocktube/N=$N,K1D=$K1D,t=$t,CFL=$CFL,rhov,shocktube.txt","w") do io
-    writedlm(io,U[3,:,:])
-end
-open("data/shocktube/N=$N,K1D=$K1D,t=$t,CFL=$CFL,E,shocktube.txt","w") do io
-    writedlm(io,U[4,:,:])
-end
-
-# df = DataFrame(N = Int64[], K = Int64[], T = Float64[], t = Float64[], CFL = Float64[], LIMITOPT = Int64[], POSDETECT = Int64[], LBOUNDTYPE = Int64[],BCFLUXTYPE = Int64[], Uhist = Array{Any,1}[], thist = Array{Any,1}[])
-df = load("dg2D_CNS_quad_shocktube.jld2","data")
-push!(df,(N,K,T,t,CFL,LIMITOPT,POSDETECT,LBOUNDTYPE,BCFLUXTYPE,Uhist,thist))
-save("dg2D_CNS_quad_shocktube.jld2","data",df)
-
+df = DataFrame(N=Int64[],K=Int64[],T=Float64[],t=Float64[],
+               CFL=Float64[],dt0=Float64[],
+               γ=Float64[],Re=Float64[],Pr=Float64[],
+               LIMITOPT=Int64[],POSDETECT=Int64[],LBOUNDTYPE=Int64[],BCFLUXTYPE=Int64[],
+               POSTOL=Float64[],
+               Uhist=Array{Any,1}[],schlhist=Array{Any,1}[],
+               thist=Array{Any,1}[],dt_hist=Array{Any,1}[])
+# df = load("$(OUTPUTPATH)/dg2D_CNS_quad_shocktube.jld2","data")
+push!(df,(N,K,T,t,CFL,dt0,γ,Re,Pr,LIMITOPT,POSDETECT,LBOUNDTYPE,BCFLUXTYPE,POSTOL,Uhist,schlhist,thist,dt_hist))
+save("$(OUTPUTPATH)/dg2D_CNS_quad_shocktube.jld2","data",df)
 
 end #muladd
 
