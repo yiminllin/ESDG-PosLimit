@@ -14,6 +14,7 @@ using DataFrames
 using JLD2
 using FileIO
 using WriteVTK
+using Compat
 
 push!(LOAD_PATH, "./src")
 using CommonUtils
