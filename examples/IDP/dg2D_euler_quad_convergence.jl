@@ -201,7 +201,7 @@ end
 
 const LIMITOPT = 2 # 1 if elementwise limiting lij, 2 if elementwise limiting li
 const POSDETECT = 0 # 1 if turn on detection, 0 otherwise
-const LBOUNDTYPE = 1 # 0 if use POSTOL as lower bound, 1 if use 0.1*loworder
+const LBOUNDTYPE = 0.1 # 0 if use POSTOL as lower bound, if > 0, use LBOUNDTYPE*loworder
 const TOL = 5e-16
 const POSTOL = 1e-14
 const WALLPT = 1.0/6.0
@@ -718,9 +718,9 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
                 if (LBOUNDTYPE == 0)
                     Lrho  = POSTOL
                     Lrhoe = POSTOL
-                elseif (LBOUNDTYPE == 1)
-                    Lrho  = 0.1*rhoi
-                    Lrhoe = 0.1*pfun(rhoi,rhoui,rhovi,Ei)/(γ-1)
+                elseif (LBOUNDTYPE > 0.0)
+                    Lrho  = LBOUNDTYPE*rhoi
+                    Lrhoe = LBOUNDTYPE*pfun(rhoi,rhoui,rhovi,Ei)/(γ-1)
                 end
                 l = limiting_param(rhoi,rhoui,rhovi,Ei,rhoP_i,rhouP_i,rhovP_i,EP_i,Lrho,Lrhoe)
                 li_min = min(li_min,l)
@@ -1097,7 +1097,7 @@ println("L1 error is $L1err")
 println("L2 error is $L2err")
 println("Linf error is $Linferr")
 
-# df = DataFrame(N = Int64[], K = Int64[], T = Float64[], CFL = Float64[], LIMITOPT = Int64[], POSDETECT = Int64[], LBOUNDTYPE = Int64[], L1err = Float64[], L2err = Float64[], Linferr = Float64[])
+# df = DataFrame(N = Int64[], K = Int64[], T = Float64[], CFL = Float64[], LIMITOPT = Int64[], POSDETECT = Int64[], LBOUNDTYPE = Float64[], L1err = Float64[], L2err = Float64[], Linferr = Float64[])
 df = load("dg2D_euler_quad_convergence.jld2","convergence_data")
 push!(df,(N,K,T,CFL,LIMITOPT,POSDETECT,LBOUNDTYPE,L1err,L2err,Linferr))
 save("dg2D_euler_quad_convergence.jld2","convergence_data",df)
