@@ -6,6 +6,9 @@ using SparseArrays
 using BenchmarkTools
 using UnPack
 using DelimitedFiles
+using DataFrames
+using JLD2
+using FileIO
 
 push!(LOAD_PATH, "./src")
 using CommonUtils
@@ -17,7 +20,9 @@ push!(LOAD_PATH, "./examples/EntropyStableEuler.jl/src")
 using EntropyStableEuler
 using EntropyStableEuler.Fluxes1D
 
-
+const LIMITOPT = 2     # 1 if elementwise limiting lij, 2 if elementwise limiting li
+const POSDETECT = 0    # 1 if turn on detection, 0 otherwise
+const LBOUNDTYPE = 0.5   # 0 if use POSTOL as lower bound, if > 0, use LBOUNDTYPE*loworder
 const POSTOL = 1e-14
 const TOL = 5e-16
 const CFL = 0.5
@@ -169,17 +174,17 @@ function zhang_wavespd(rhoL,rhouL,EL,sigma2L,sigma3L,pL)
     return wavespdL
 end
 
-function limiting_param(U_low, P_ij)
+function limiting_param(U_low, P_ij, Lrho, Lrhoe)
     l = 1.0
     # Limit density
-    if U_low[1] + P_ij[1] < -TOL
-        l = min(abs(U_low[1])/(abs(P_ij[1])+POSTOL), 1.0)
+    if U_low[1] + P_ij[1] < Lrho
+        l = max((Lrho-U_low[1])/P_ij[1],0.0)
     end
 
     # limiting internal energy (via quadratic function)
     a = P_ij[1]*P_ij[3]-1.0/2.0*P_ij[2]^2
-    b = U_low[3]*P_ij[1]+U_low[1]*P_ij[3]-U_low[2]*P_ij[2]
-    c = U_low[3]*U_low[1]-1.0/2.0*U_low[2]^2
+    b = U_low[3]*P_ij[1]+U_low[1]*P_ij[3]-U_low[2]*P_ij[2]-P_ij[1]*Lrhoe
+    c = U_low[3]*U_low[1]-1.0/2.0*U_low[2]^2-U_low[1]*Lrhoe
 
     l_eps_ij = 1.0
     if b^2-4*a*c >= 0
@@ -270,7 +275,7 @@ function rhs_viscous(U,K,N,Mlump_inv,Vf,mapP,nxJ,S,Dr,LIFT)
     return sigmax, sigma
 end
 
-function rhs_IDP(U,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,T,dt,in_s1,is_low_order)
+function rhs_IDP(U,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,T,dt,t,in_s1,is_low_order)
     p = pfun_nd.(U[1],U[2],U[3])
     flux = zero.(U)
     @. flux[1] = U[2]
@@ -432,33 +437,73 @@ function rhs_IDP(U,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,T,dt,in_s1,is_low_o
             end
         end
 
-        for i = 1:N+1
-            lambda_j = 1/N
-            m_i = J*wq[i]
-            for j = 1:N+1
-                if i != j
-                    for c = 1:3
-                        P_ij[c] = dt/(m_i*lambda_j)*(F_low[c][i,j]-F_high[c][i,j])
+        if (POSDETECT == 0)
+            is_H_positive = false
+        end
+
+        if (LIMITOPT == 1)
+            for i = 1:N+1
+                lambda_j = 1/N
+                m_i = J*wq[i]
+                for j = 1:N+1
+                    if i != j
+                        for c = 1:3
+                            P_ij[c] = dt/(m_i*lambda_j)*(F_low[c][i,j]-F_high[c][i,j])
+                        end
+                        if !is_H_positive
+                            Lrho  = POSTOL
+                            Lrhoe = POSTOL
+                            L[i,j] = limiting_param([U_low[1][i]; U_low[2][i]; U_low[3][i]],P_ij,Lrho,Lrhoe)
+                        else
+                            L[i,j] = 1.0
+                        end
                     end
-                    if !is_H_positive
-                        L[i,j] = limiting_param([U_low[1][i]; U_low[2][i]; U_low[3][i]],P_ij)
-                    else
-                        L[i,j] = 1.0
+                end
+            end
+        elseif (LIMITOPT == 2)
+            li_min = 1.0
+            for i = 1:N+1
+                lambda_j = 1/N
+                m_i = J*wq[i]
+                for c = 1:3
+                    P_ij[c] = 0.0
+                end
+                for j = 1:N+1
+                    for c = 1:3
+                        P_ij[c] += dt/(m_i*lambda_j)*(F_low[c][i,j]-F_high[c][i,j])
+                    end
+                end
+                if (LBOUNDTYPE == 0)
+                    Lrho  = POSTOL
+                    Lrhoe = POSTOL
+                elseif (LBOUNDTYPE > 0)
+                    Lrho  = LBOUNDTYPE*U_low[1][i]
+                    Lrhoe = LBOUNDTYPE*pfun_nd(U_low[1][i],U_low[2][i],U_low[3][i])/(γ-1)
+                end
+                l = limiting_param([U_low[1][i]; U_low[2][i]; U_low[3][i]],P_ij,Lrho,Lrhoe)
+                li_min = min(li_min,l)
+            end
+
+            for i = 1:N+1
+                for j = 1:N+1
+                    if i != j
+                        L[i,j] = li_min
+                        L[j,i] = li_min
                     end
                 end
             end
         end
 
-        # Symmetrize limiting parameters
-        for i = 1:N+1
-            for j = 1:N+1
-                if i != j
-                    l_ij = min(L[i,j],L[j,i])
-                    L[i,j] = l_ij
-                    L[j,i] = l_ij
-                end
-            end
-        end
+        # # Symmetrize limiting parameters
+        # for i = 1:N+1
+        #     for j = 1:N+1
+        #         if i != j
+        #             l_ij = min(L[i,j],L[j,i])
+        #             L[i,j] = l_ij
+        #             L[j,i] = l_ij
+        #         end
+        #     end
+        # end
 
         # elementwise limiting
         l = 1.0
@@ -742,14 +787,14 @@ while t < T
 
     # SSPRK(3,3)
     dt = Inf
-    rhsU,dt = rhs_IDP(U,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,T,dt,true,is_low_order)
+    rhsU,dt = rhs_IDP(U,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,T,dt,t,true,is_low_order)
     # rhsU,dt = rhs_IDPlow(U,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,true)
     @. resW = U + dt*rhsU
-    rhsU,_ = rhs_IDP(resW,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,T,dt,false,is_low_order)
+    rhsU,_ = rhs_IDP(resW,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,T,dt,t,false,is_low_order)
     # rhsU,_ = rhs_IDPlow(resW,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,false)
     @. resZ = resW+dt*rhsU
     @. resW = 3/4*U+1/4*resZ
-    rhsU,_ = rhs_IDP(resW,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,T,dt,false,is_low_order)
+    rhsU,_ = rhs_IDP(resW,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,T,dt,t,false,is_low_order)
     # rhsU,_ = rhs_IDPlow(resW,K,N,Mlump_inv,Vf,mapP,nxJ,S0,S,Dr,LIFT,wq,dt,false)
     @. resZ = resW+dt*rhsU
     @. U = 1/3*U+2/3*resZ
@@ -804,12 +849,17 @@ println("L1 error is $L1err")
 println("L2 error is $L2err")
 println("Linf error is $Linferr")
 
-open("/data/yl184/1D-CNS-conv/N=$N,K=$K,CFL=$CFL,LOW=$is_low_order,issmooth=$ISSMOOTH,x,1D-CNS-conv.txt","w") do io
-    writedlm(io,x)
-end
-open("/data/yl184/1D-CNS-conv/N=$N,K=$K,CFL=$CFL,LOW=$is_low_order,issmooth=$ISSMOOTH,rho,1D-CNS-conv.txt","w") do io
-    writedlm(io,U[1])
-end
+# open("/data/yl184/1D-CNS-conv/N=$N,K=$K,CFL=$CFL,LOW=$is_low_order,issmooth=$ISSMOOTH,x,1D-CNS-conv.txt","w") do io
+#     writedlm(io,x)
+# end
+# open("/data/yl184/1D-CNS-conv/N=$N,K=$K,CFL=$CFL,LOW=$is_low_order,issmooth=$ISSMOOTH,rho,1D-CNS-conv.txt","w") do io
+#     writedlm(io,U[1])
+# end
+
+# df = DataFrame(N = Int64[], K = Int64[], T = Float64[], CFL = Float64[], LIMITOPT = Int64[], POSDETECT = Int64[], LBOUNDTYPE = Float64[], L1err = Float64[], L2err = Float64[], Linferr = Float64[])
+df = load("dg1D_CNS_convergence.jld2","convergence_data")
+push!(df,(N,K,T,CFL,LIMITOPT,POSDETECT,LBOUNDTYPE,L1err,L2err,Linferr))
+save("dg1D_CNS_convergence.jld2","convergence_data",df)
 
 
 end
