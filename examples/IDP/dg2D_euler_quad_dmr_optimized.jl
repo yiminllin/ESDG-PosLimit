@@ -1,3 +1,5 @@
+using Pkg
+Pkg.activate("Project.toml")
 using Revise # reduce recompilation time
 using Plots
 # using Documenter
@@ -9,6 +11,10 @@ using StaticArrays
 using DelimitedFiles
 using Polyester
 using MuladdMacro
+using DataFrames
+using JLD2
+using FileIO
+using WriteVTK
 
 push!(LOAD_PATH, "./src")
 using CommonUtils
@@ -17,11 +23,6 @@ using Basis2DQuad
 using UniformQuadMesh
 
 using SetupDG
-
-push!(LOAD_PATH, "./examples/EntropyStableEuler.jl/src")
-include("../EntropyStableEuler.jl/src/logmean.jl")
-using EntropyStableEuler
-using EntropyStableEuler.Fluxes2D
 
 @muladd @inbounds begin
 
@@ -153,23 +154,23 @@ end
     return fx1,fx2,fx3,fx4,fy1,fy2,fy3,fy4
 end
 
-@inline function limiting_param(rhoL,rhouL,rhovL,EL,rhoP,rhouP,rhovP,EP)
+@inline function limiting_param(rhoL,rhouL,rhovL,EL,rhoP,rhouP,rhovP,EP,Lrho,Lrhoe)
     # L - low order, P - P_ij
     l = 1.0
     # Limit density
-    if rhoL + rhoP < -TOL
-        l = max((-rhoL+POSTOL)/rhoP, 0.0)
+    if rhoL + rhoP < Lrho
+        l = max((Lrho-rhoL)/rhoP, 0.0)
     end
 
     p = pfun(rhoL+l*rhoP,rhouL+l*rhouP,rhovL+l*rhovP,EL+l*EP)
-    if p > TOL
+    if p/(γ-1) > Lrhoe
         return l
     end
 
     # limiting internal energy (via quadratic function)
     a = rhoP*EP-(rhouP^2+rhovP^2)/2.0
-    b = rhoP*EL+rhoL*EP-rhouL*rhouP-rhovL*rhovP
-    c = rhoL*EL-(rhouL^2+rhovL^2)/2.0-POSTOL
+    b = rhoP*EL+rhoL*EP-rhouL*rhouP-rhovL*rhovP-rhoP*Lrhoe
+    c = rhoL*EL-(rhouL^2+rhovL^2)/2.0-rhoL*Lrhoe
 
     d = 1.0/(2.0*a)
     e = b^2-4.0*a*c
@@ -194,16 +195,22 @@ end
     return l
 end
 
+const OUTPUTPATH = "/home/yiminlin/Desktop/dg2D_euler_quad_dmr_output"
+const SAVEINT    = 200
+
 const LIMITOPT = 2 # 1 if elementwise limiting lij, 2 if elementwise limiting li, 3 if nodewise
+const POSDETECT  = 0 # 1 if turn on detection, 0 otherwise
+const LBOUNDTYPE = 1 # 0 if use POSTOL as lower bound, if > 0, use LBOUNDTYPE*loworder
+const BCFLUXTYPE = 2 # 0 - Central, 1 - Nondissipative, 2 - dissipative
 const TOL = 5e-16
 const POSTOL = 1e-14
 const WALLPT = 1.0/6.0
 const Nc = 4 # number of components
 "Approximation parameters"
 const N = 3
-const K1D = 250
+const K1D = 30
 const T = 0.2
-const dt0 = 1e-5
+const dt0 = 1e-2
 const XLENGTH = 7.0/2.0
 const CFL = 0.75
 const NUM_THREADS = Threads.nthreads()
@@ -299,6 +306,23 @@ S0r = droptol!(sparse(kron(M1D,S01D)),TOL)
 S0s = droptol!(sparse(kron(S01D,M1D)),TOL)
 Br = droptol!(sparse(Qr+Qr'),TOL)
 Bs = droptol!(sparse(Qs+Qs'),TOL)
+
+@inline function noslip_flux(rhoM,uM,vM,pM,nx,ny)
+    # Assume n = (n1,n2) normalized normal
+    c     = sqrt(γ*pM/rhoM)
+    vn    = uM*nx+vM*ny
+    Ma_n  = vn/c
+    Pstar = pM
+    if (BCFLUXTYPE == 2)
+        if (vn > 0)
+            Pstar = (1+γ*Ma_n*((γ+1)/4*Ma_n + sqrt(((γ+1)/4*Ma_n)^2+1)))*pM
+        else
+            Pstar = max((1+1/2*(γ-1)*Ma_n)^(2*γ/(γ-1)), 1e-4)*pM
+        end
+    end
+
+    return 0.0, Pstar*nx, Pstar*ny, 0.0
+end
 
 @inline function get_infoP(mapP,Fmask,i,k)
     gP = mapP[i,k]           # exterior global face node number
@@ -713,6 +737,7 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
             fy_2_M = f_y[2,iM,k]
             fy_3_M = f_y[3,iM,k]
             fy_4_M = f_y[4,iM,k]
+            pM    = pfun(rhoM,rhouM,rhovM,EM)
 
             rhoP,rhouP,rhovP,EP,fx_1_P,fx_2_P,fx_3_P,fx_4_P,fy_1_P,fy_2_P,fy_3_P,fy_4_P,has_bc = get_valP(U,f_x,f_y,t,mapP,Fmask,i,iM,xM,yM,uM,vM,k)
             λ = λf_arr[i,k]
@@ -739,6 +764,27 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
                                -λ*(rhovP-rhovM) )
                 F_P[4,i,tid] = (BsJ_ii_halved*(fy_4_M+fy_4_P)
                                -λ*(EP-EM) )
+            end
+
+            if (BCFLUXTYPE >= 1)
+                _,_,_,iswall,_ = check_BC(xM,yM,i)
+                if iswall
+                    nx = 0.0    # TODO: hardcoded normal
+                    ny = -1.0
+
+                    f1s,f2s,f3s,f4s = noslip_flux(rhoM,uM,vM,pM,nx,ny)
+                    wfi = 0.0
+                    if is_face_x(i)
+                        wfi = abs(BrJ_ii_halved)*2
+                    end
+                    if is_face_y(i)
+                        wfi = abs(BsJ_ii_halved)*2
+                    end
+                    F_P[1,i,tid] = wfi*f1s
+                    F_P[2,i,tid] = wfi*f2s
+                    F_P[3,i,tid] = wfi*f3s
+                    F_P[4,i,tid] = wfi*f4s
+                end
             end
         end
 
@@ -779,6 +825,10 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
             end
         end
 
+        if (POSDETECT == 0)
+            is_H_positive = false
+        end
+
         if ((LIMITOPT == 1) || (LIMITOPT == 3)) && !is_H_positive
             # Calculate limiting parameters
             for ni = 1:S_nnz_hv
@@ -811,8 +861,10 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
                 rhouP_j = -coeff_j*rhouP 
                 rhovP_j = -coeff_j*rhovP 
                 EP_j    = -coeff_j*EP
-                L[ni,tid] = min(limiting_param(rhoi,rhoui,rhovi,Ei,rhoP_i,rhouP_i,rhovP_i,EP_i),
-                                limiting_param(rhoj,rhouj,rhovj,Ej,rhoP_j,rhouP_j,rhovP_j,EP_j))
+                Lrho    = POSTOL
+                Lrhoe   = POSTOL
+                L[ni,tid] = min(limiting_param(rhoi,rhoui,rhovi,Ei,rhoP_i,rhouP_i,rhovP_i,EP_i,Lrho,Lrhoe),
+                                limiting_param(rhoj,rhouj,rhovj,Ej,rhoP_j,rhouP_j,rhovP_j,EP_j,Lrho,Lrhoe))
             end
         elseif (LIMITOPT == 2) && !is_H_positive
             li_min = 1.0 # limiting parameter for element
@@ -836,7 +888,14 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
                     rhovP_i = rhovP_i + coeff*rhovP 
                     EP_i    = EP_i    + coeff*EP 
                 end
-                l = limiting_param(rhoi,rhoui,rhovi,Ei,rhoP_i,rhouP_i,rhovP_i,EP_i)
+                if (LBOUNDTYPE == 0)
+                    Lrho  = POSTOL
+                    Lrhoe = POSTOL
+                else
+                    Lrho  = LBOUNDTYPE*rhoi
+                    Lrhoe = LBOUNDTYPE*pfun(rhoi,rhoui,rhovi,Ei)/(γ-1)
+                end
+                l = limiting_param(rhoi,rhoui,rhovi,Ei,rhoP_i,rhouP_i,rhovP_i,EP_i,Lrho,Lrhoe)
                 li_min = min(li_min,l)
             end
 
@@ -857,53 +916,16 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
             l_em1 = 0.0
         end
 
-        # if k == 7923
-        #     @show l_e
-        # end
-
-        #=
-        li_min = 1.0 # limiting parameter for element
-        for i = 1:Np
-            rhoi  = U_low[1,i,tid]
-            rhoui = U_low[2,i,tid]
-            rhovi = U_low[3,i,tid]
-            Ei    = U_low[4,i,tid]
-            rhoP_i  = 0.0
-            rhouP_i = 0.0
-            rhovP_i = 0.0
-            EP_i    = 0.0
-            coeff   = dt*MJ_inv[i]
-            for j = 1:Np
-                rhoP   = (F_low[1,i,j,tid]-F_high[1,i,j,tid])
-                rhouP  = (F_low[2,i,j,tid]-F_high[2,i,j,tid])
-                rhovP  = (F_low[3,i,j,tid]-F_high[3,i,j,tid])
-                EP     = (F_low[4,i,j,tid]-F_high[4,i,j,tid])
-                rhoP_i  = rhoP_i  + coeff*rhoP 
-                rhouP_i = rhouP_i + coeff*rhouP 
-                rhovP_i = rhovP_i + coeff*rhovP 
-                EP_i    = EP_i    + coeff*EP 
-            end
-            l = limiting_param(rhoi,rhoui,rhovi,Ei,rhoP_i,rhouP_i,rhovP_i,EP_i)
-            li_min = min(li_min,l)
-        end
-
-        for ni = 1:S_nnz_hv
-            L[ni,tid] = li_min
-        end
-        l_e = li_min
-        l_em1 = li_min-1.0
-        =#
-
         for ni = 1:S_nnz_hv
             i     = S_nnzi[ni]
             j     = S_nnzj[ni]
             for c = 1:Nc
                 FL_ij = F_low[c,i,j,tid]
                 FH_ij = F_high[c,i,j,tid]
-                # if (LIMITOPT == 3)
-                #     l_e   = L[ni,tid]
-                #     l_em1 = L[ni,tid]-1.0 
-                # end
+                if (LIMITOPT == 3)
+                    l_e   = L[ni,tid]
+                    l_em1 = L[ni,tid]-1.0 
+                end
                 rhsU[c,i,k] = rhsU[c,i,k] + l_em1*FL_ij - l_e*FH_ij
                 rhsU[c,j,k] = rhsU[c,j,k] - l_em1*FL_ij + l_e*FH_ij
             end
@@ -1098,8 +1120,45 @@ Vp = vandermonde_2D(N,rp,sp)/VDM
 gr(aspect_ratio=:equal,legend=false,
    markerstrokewidth=0,markersize=2)
 
-#=
+function construct_vtk_mesh!(x_vtk,y_vtk)
+    # TODO: assume sturctured Mesh
+    for k = 1:K
+        iK = mod1(k,Int(XLENGTH*K1D))
+        jK = div(k-1,Int(XLENGTH*K1D))+1
+        xk = reshape(x[:,k],N+1,N+1)
+        yk = reshape(y[:,k],N+1,N+1)
+        x_vtk[(iK-1)*(N+1)+1:iK*(N+1),(jK-1)*(N+1)+1:jK*(N+1)] = xk
+        y_vtk[(iK-1)*(N+1)+1:iK*(N+1),(jK-1)*(N+1)+1:jK*(N+1)] = yk
+    end
+end
+
+function construct_vtk_file!(U,Uvtk,pvdfile,xvtk,yvtk,t)
+    vtk_grid("$(OUTPUTPATH)/dg2D_euler_quad_dmr_LBOUNDTYPE=$(LBOUNDTYPE)_t=$t",xvtk,yvtk) do vtk
+        for k = 1:K
+            iK = mod1(k,Int(XLENGTH*K1D))
+            jK = div(k-1,Int(XLENGTH*K1D))+1
+            for c = 1:Nc
+                Uvtk[c,(iK-1)*(N+1)+1:iK*(N+1),(jK-1)*(N+1)+1:jK*(N+1)] = U[c,:,k]
+            end
+        end    
+        vtk["rho"]  = Uvtk[1,:,:] 
+        vtk["rhou"] = Uvtk[2,:,:] 
+        vtk["rhov"] = Uvtk[3,:,:] 
+        vtk["E"]    = Uvtk[4,:,:] 
+
+        pvdfile[t]  = vtk
+    end
+end
+
+x_vtk    = zeros(Float64,Int(XLENGTH*(N+1)*K1D),(N+1)*K1D)    # TODO: hardcoded domain size
+y_vtk    = zeros(Float64,Int(XLENGTH*(N+1)*K1D),(N+1)*K1D)
+U_vtk    = zeros(Float64,Nc,Int(XLENGTH*(N+1)*K1D),(N+1)*K1D)
+
+construct_vtk_mesh!(x_vtk,y_vtk)
+pvd = paraview_collection("$(OUTPUTPATH)/dg2D_euler_quad_dmr_LBOUNDTYPE=$(LBOUNDTYPE).pvd")
+
 #Timing
+#=
 dt = dt0
 #rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,true);
 @btime rhs_IDP!($U,$rhsU,$t,$dt,$prealloc,$ops,$geom,true);
@@ -1108,6 +1167,8 @@ dt = dt0
 
 dt_hist = []
 i = 1
+Uhist = []
+thist = []
 
 mapN = collect(reshape(1:Np*K,Np,K))
 inflow_nodal = mapN[findall(@. (abs(x) < TOL) | ((x < WALLPT) & (abs(y) < TOL)))]
@@ -1149,38 +1210,6 @@ topflow_nodal = mapN[findall(@. abs(y-1.) < TOL)]
     end
 end
 
-open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,x,dmr.txt","w") do io
-    writedlm(io,x)
-end
-open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,y,dmr.txt","w") do io
-    writedlm(io,y)
-end
-
-
-# # t=0.05481075824215245
-# # t=0.11891729496497934
-# t=0.10685274365405546
-# t=0.17138294319028055
-# i=152000+1
-# rho = readdlm("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rho,dmr.txt")
-# rhou = readdlm("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhou,dmr.txt")
-# rhov = readdlm("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhov,dmr.txt")
-# E = readdlm("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,E,dmr.txt")
-# U[1,:,:] = rho
-# U[2,:,:] = rhou
-# U[3,:,:] = rhov
-# U[4,:,:] = E
-# for k = 1:K 
-#     for i = 1:Np
-#         if x[i,k] > 3.3
-#             U[1,i,k] = rhoR
-#             U[2,i,k] = rhouR
-#             U[3,i,k] = rhovR
-#             U[4,i,k] = ER
-#         end
-#     end
-# end
-
 @time while t < T
 #while i < 2
     # SSPRK(3,3)
@@ -1199,25 +1228,12 @@ end
     enforce_BC_timestep!(U,inflow_nodal,topflow_nodal,t+dt);
 
     push!(dt_hist,dt)
+    push!(thist,t)
     global t = t + dt
     println("Current time $t with time step size $dt, and final time $T, at step $i")
     flush(stdout)
     global i = i + 1
-    # if ((mod(i,100) == 1) | (i >= 55))
-    if (mod(i,1000) == 1)
-        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rho,dmr.txt","w") do io
-            writedlm(io,U[1,:,:])
-        end
-        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhou,dmr.txt","w") do io
-            writedlm(io,U[2,:,:])
-        end
-        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhov,dmr.txt","w") do io
-            writedlm(io,U[3,:,:])
-        end
-        open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,E,dmr.txt","w") do io
-            writedlm(io,U[4,:,:])
-        end
-
+    if (mod(i,SAVEINT) == 1)
         # TODO: 
         for k = 1:K 
             for i = 1:Np
@@ -1229,53 +1245,25 @@ end
                 end
             end
         end
+        push!(Uhist,copy(U))
+        construct_vtk_file!(U,U_vtk,pvd,x_vtk,y_vtk,t)
     end
 end
 
-open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rho,dmr.txt","w") do io
-    writedlm(io,U[1,:,:])
-end
-open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhou,dmr.txt","w") do io
-    writedlm(io,U[2,:,:])
-end
-open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,rhov,dmr.txt","w") do io
-    writedlm(io,U[3,:,:])
-end
-open("/data/yl184/N=$N,K1D=$K1D,t=$t,CFL=$CFL,x=$XLENGTH,E,dmr.txt","w") do io
-    writedlm(io,U[4,:,:])
-end
+push!(Uhist,copy(U))
+construct_vtk_file!(U,U_vtk,pvd,x_vtk,y_vtk,t)
 
-#=
-xp = Vp*x
-yp = Vp*y
-vv = Vp*U[1,:,:]
-xp = vec(xp)
-yp = vec(yp)
-vv = vec(vv)
-scatter(xp,yp,vv,zcolor=vv,camera=(0,90),colorbar=:right)
-savefig("~/Desktop/N=$N,K1D=$K1D,T=$T,doubleMachReflection.png")
-=#
+vtk_save(pvd)
 
-# p = zeros(Np,K)
-# for k = 1:K
-#     for i = 1:Np
-#         p[i,k] = pfun(U[1,i,k],U[2,i,k],U[3,i,k],U[4,i,k])
-#     end
-# end
-
-# @show sum(U[1,:,:] .< POSTOL)
-# @show sum(p .< POSTOL)
-# dt = dt0
-# dt = rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,true);
-# dt = min(CFL*dt,T-t)
-# @. resW = U + dt*rhsU
-
-# # for k = 1:K
-# #     for i = 1:Np
-# #         p[i,k] = pfun(resW[1,i,k],resW[2,i,k],resW[3,i,k],resW[4,i,k])
-# #     end
-# # end
-# # @show sum(resW[1,:,:] .< POSTOL)
-# # @show sum(p .< POSTOL)
+df = DataFrame(N=Int64[],K=Int64[],T=Float64[],t=Float64[],
+               CFL=Float64[],dt0=Float64[],
+               γ=Float64[],
+               LIMITOPT=Int64[],POSDETECT=Int64[],LBOUNDTYPE=Float64[],BCFLUXTYPE=Int64[],
+               POSTOL=Float64[],
+               Uhist=Array{Any,1}[],
+               thist=Array{Any,1}[],dt_hist=Array{Any,1}[])
+# df = load("$(OUTPUTPATH)/dg2D_CNS_quad_shocktube.jld2","data")
+push!(df,(N,K,T,t,CFL,dt0,γ,LIMITOPT,POSDETECT,LBOUNDTYPE,BCFLUXTYPE,POSTOL,Uhist,thist,dt_hist))
+save("$(OUTPUTPATH)/dg2D_euler_quad_dmr.jld2","data",df)
 
 end #muladd
