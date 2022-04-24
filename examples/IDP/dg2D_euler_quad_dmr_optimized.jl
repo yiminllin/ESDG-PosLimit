@@ -200,7 +200,7 @@ const SAVEINT    = 200
 
 const LIMITOPT = 2 # 1 if elementwise limiting lij, 2 if elementwise limiting li, 3 if nodewise
 const POSDETECT  = 0 # 1 if turn on detection, 0 otherwise
-const LBOUNDTYPE = 1 # 0 if use POSTOL as lower bound, if > 0, use LBOUNDTYPE*loworder
+const LBOUNDTYPE = 0.1 # 0 if use POSTOL as lower bound, if > 0, use LBOUNDTYPE*loworder
 const BCFLUXTYPE = 2 # 0 - Central, 1 - Nondissipative, 2 - dissipative
 const TOL = 5e-16
 const POSTOL = 1e-14
@@ -1262,7 +1262,7 @@ df = DataFrame(N=Int64[],K=Int64[],T=Float64[],t=Float64[],
                POSTOL=Float64[],
                Uhist=Array{Any,1}[],
                thist=Array{Any,1}[],dt_hist=Array{Any,1}[])
-# df = load("$(OUTPUTPATH)/dg2D_CNS_quad_shocktube.jld2","data")
+# df = load("$(OUTPUTPATH)/dg2D_euler_quad_dmr.jld2","data")
 push!(df,(N,K,T,t,CFL,dt0,γ,LIMITOPT,POSDETECT,LBOUNDTYPE,BCFLUXTYPE,POSTOL,Uhist,thist,dt_hist))
 save("$(OUTPUTPATH)/dg2D_euler_quad_dmr.jld2","data",df)
 
