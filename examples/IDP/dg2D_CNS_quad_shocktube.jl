@@ -283,6 +283,9 @@ const USEPLOTPT = true
 const MESHTYPE  = 0   # 0 - uniform mesh, 1 - nonuniform mesh 
 const OUTPUTVTK = false
 
+@show LIMITOPT
+@show LBOUNDTYPE
+
 const γ = 1.4
 const Re = 1000
 const mu = 1/Re
@@ -310,7 +313,7 @@ if (MESHTYPE == 0)
     @. VY = (VY+1)/4
 else
     @. VX = (VX+1)/2
-    @. VY = ((VY+1)/2)^2/2
+    @. VY = ((VY+1)/2)^1.2/2
 end
 
 rd = init_reference_quad(N,gauss_lobatto_quad(0,0,N))
