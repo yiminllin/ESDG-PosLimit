@@ -1,7 +1,6 @@
 using Pkg
 Pkg.activate("Project.toml")
 using Revise # reduce recompilation time
-using Plots
 using LinearAlgebra
 using SparseArrays
 using BenchmarkTools
@@ -276,11 +275,13 @@ const POSDETECT  = 0 # 1 if turn on detection, 0 otherwise
 const LBOUNDTYPE = 0.1 # 0 if use POSTOL as lower bound, if > 0, use LBOUNDTYPE*loworder
 const BCFLUXTYPE = 2 # 0 - Central, 1 - Nondissipative, 2 - dissipative
 const VISCPENTYPE = 0.0 # \in [0,1]: alpha = VISCPENTYPE, -1: -1/Re/v_4
-const TOL = 1e-14
-const POSTOL = 1e-14
+const TOL = 1e-12
+const POSTOL = 1e-12
 const Nc = 4 # number of components
-const SAVEINT = 100
+const SAVEINT = 500
 const USEPLOTPT = true
+const MESHTYPE  = 0   # 0 - uniform mesh, 1 - nonuniform mesh 
+const OUTPUTVTK = false
 
 const γ = 1.4
 const Re = 1000
@@ -292,10 +293,11 @@ const cv = 1/(γ-1)
 const kappa = mu*cp/Pr
 
 "Approximation parameters"
-const N = 2
-const K1D = 50
+const N = 3
+const K1D = 120
 const T = 1.0
 const CFL = 0.5
+const CFLvisc = 0.1
 const NUM_THREADS = Threads.nthreads()
 const BOTTOMRIGHT = N+1
 const TOPRIGHT    = 2*(N+1)
@@ -303,10 +305,13 @@ const TOPLEFT     = 3*(N+1)
 
 "Mesh related variables"
 VX, VY, EToV = uniform_quad_mesh(2*K1D,K1D)
-@. VX = (VX+1)/2
-@. VY = (VY+1)/4
-# @. VX = (VX+1)/2
-# @. VY = ((VY+1)/2)^2/2
+if (MESHTYPE == 0)
+    @. VX = (VX+1)/2
+    @. VY = (VY+1)/4
+else
+    @. VX = (VX+1)/2
+    @. VY = ((VY+1)/2)^2/2
+end
 
 rd = init_reference_quad(N,gauss_lobatto_quad(0,0,N))
 "Initialize reference element"
@@ -986,7 +991,7 @@ function rhs_IDP!(U,rhsU,t,dtl,prealloc,ops,geom,in_s1)
             if is_face_x(i)
                 for c = 1:Nc
                     F_P[c,i,tid] = (BrJ_ii_halved*(f_x[c,iM,k]+fP[c,1,tid]-sigma_x[c,iM,k]-sigmaP[c,1,tid])
-                                   -λ*(UP[c,tid]-U[c,iM,k]) + 2.0*abs(BrJ_ii_halved)*viscpen[c,tid]) 
+                                   -λ*(UP[c,tid]-U[c,iM,k]) - 2.0*abs(BrJ_ii_halved)*viscpen[c,tid]) 
                 end
             end
 
@@ -994,7 +999,7 @@ function rhs_IDP!(U,rhsU,t,dtl,prealloc,ops,geom,in_s1)
             if is_face_y(i)
                 for c = 1:Nc
                     F_P[c,i,tid] = (BsJ_ii_halved*(f_y[c,iM,k]+fP[c,2,tid]-sigma_y[c,iM,k]-sigmaP[c,2,tid])
-                                   -λ*(UP[c,tid]-U[c,iM,k]) + 2.0*abs(BsJ_ii_halved)*viscpen[c,tid]) 
+                                   -λ*(UP[c,tid]-U[c,iM,k]) - 2.0*abs(BsJ_ii_halved)*viscpen[c,tid]) 
                 end
             end
 
@@ -1031,14 +1036,14 @@ function rhs_IDP!(U,rhsU,t,dtl,prealloc,ops,geom,in_s1)
                     # flux in x direction
                     if is_face_x(i)
                         for c = 1:Nc
-                            F_P[c,i,tid] -= BrJ_ii_halved*(sigma_x[c,iM,k]+sigmaP[c,1,tid]) - 2.0*abs(BrJ_ii_halved)*viscpen[c,tid]
+                            F_P[c,i,tid] -= BrJ_ii_halved*(sigma_x[c,iM,k]+sigmaP[c,1,tid]) + 2.0*abs(BrJ_ii_halved)*viscpen[c,tid]
                         end
                     end
 
                     # flux in y direction
                     if is_face_y(i)
                         for c = 1:Nc
-                            F_P[c,i,tid] -= BsJ_ii_halved*(sigma_y[c,iM,k]+sigmaP[c,2,tid]) - 2.0*abs(BsJ_ii_halved)*viscpen[c,tid]
+                            F_P[c,i,tid] -= BsJ_ii_halved*(sigma_y[c,iM,k]+sigmaP[c,2,tid]) + 2.0*abs(BsJ_ii_halved)*viscpen[c,tid]
                         end
                     end
                 end
@@ -1451,13 +1456,12 @@ schlhist = []
 #     @btime rhs_IDP!($U,$rhsU,$t,$dt,$prealloc,$ops,$geom,$true);
 # end
 
-# try
-
 const dx  = min(minimum([x[end,j]-x[1,j] for j in 1:K]),minimum([y[end,j]-y[1,j] for j in 1:K]))
-const dt0 = CFL*Re*dx^2
+const dt0 = CFLvisc*Re*dx^2
 
 rx = rxJ./J
 sy = syJ./J
+try
 @time while t < T
 #while i < 2
     # SSPRK(3,3)
@@ -1483,31 +1487,33 @@ sy = syJ./J
         schlieren_visualization!(shcl,U,rhot,rhof,rhoP,rx,sy,Vf,LIFT,J,nxJ,nyJ)
         push!(Uhist,copy(U))
         push!(schlhist,copy(shcl))
-        construct_vtk_file!(U,shcl,U_vtk,schl_vtk,pvd,x_vtk,y_vtk,t)
+        if (OUTPUTVTK)
+            construct_vtk_file!(U,shcl,U_vtk,schl_vtk,pvd,x_vtk,y_vtk,t)
+        end
     end
 end
-# catch err
-# end
+catch err
+end
 
 shcl = zeros(Float64,Np,K)
 schlieren_visualization!(shcl,U,rhot,rhof,rhoP,rx,sy,Vf,LIFT,J,nxJ,nyJ)
 push!(Uhist,copy(U))
 push!(schlhist,shcl)
-construct_vtk_file!(U,shcl,U_vtk,schl_vtk,pvd,x_vtk,y_vtk,t)
 
-vtk_save(pvd)
+if (OUTPUTVTK)
+    construct_vtk_file!(U,shcl,U_vtk,schl_vtk,pvd,x_vtk,y_vtk,t)
+    vtk_save(pvd)
+end
 
-df = DataFrame(N=Int64[],K=Int64[],T=Float64[],t=Float64[],
-               CFL=Float64[],dt0=Float64[],
-               γ=Float64[],Re=Float64[],Pr=Float64[],
-               LIMITOPT=Int64[],POSDETECT=Int64[],LBOUNDTYPE=Float64[],BCFLUXTYPE=Int64[],
-               VISCPENTYPE=Float64[],POSTOL=Float64[],
-               Uhist=Array{Any,1}[],schlhist=Array{Any,1}[],
-               thist=Array{Any,1}[],dt_hist=Array{Any,1}[])
-# df = load("$(OUTPUTPATH)/dg2D_CNS_quad_shocktube.jld2","data")
-push!(df,(N,K,T,t,CFL,dt0,γ,Re,Pr,LIMITOPT,POSDETECT,LBOUNDTYPE,BCFLUXTYPE,VISCPENTYPE,POSTOL,Uhist,schlhist,thist,dt_hist))
+# df = DataFrame(N=Int64[],K=Int64[],T=Float64[],t=Float64[],
+#                CFL=Float64[],dt0=Float64[],
+#                γ=Float64[],Re=Float64[],Pr=Float64[],VX=Array{Float64,1}[],VY=Array{Float64,1}[],EToV=Array{Int64,2}[],
+#                LIMITOPT=Int64[],POSDETECT=Int64[],LBOUNDTYPE=Float64[],BCFLUXTYPE=Int64[],MESHTYPE=Int64[],
+#                VISCPENTYPE=Float64[],POSTOL=Float64[],SAVEINT=Int64[],
+#                Uhist=Array{Any,1}[],schlhist=Array{Any,1}[],
+#                thist=Array{Any,1}[],dt_hist=Array{Any,1}[])
+df = load("$(OUTPUTPATH)/dg2D_CNS_quad_shocktube.jld2","data")
+push!(df,(N,K,T,t,CFL,dt0,γ,Re,Pr,VX,VY,EToV,LIMITOPT,POSDETECT,LBOUNDTYPE,BCFLUXTYPE,MESHTYPE,VISCPENTYPE,POSTOL,SAVEINT,Uhist,schlhist,thist,dt_hist))
 save("$(OUTPUTPATH)/dg2D_CNS_quad_shocktube.jld2","data",df)
 
 end #muladd
-
-
