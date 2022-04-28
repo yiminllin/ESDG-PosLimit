@@ -278,7 +278,7 @@ const VISCPENTYPE = 0.0 # \in [0,1]: alpha = VISCPENTYPE, -1: -1/Re/v_4
 const TOL = 1e-12
 const POSTOL = 1e-12
 const Nc = 4 # number of components
-const SAVEINT = 500
+const SAVEINT = 1000
 const USEPLOTPT = true
 const MESHTYPE  = 0   # 0 - uniform mesh, 1 - nonuniform mesh 
 const OUTPUTVTK = false
