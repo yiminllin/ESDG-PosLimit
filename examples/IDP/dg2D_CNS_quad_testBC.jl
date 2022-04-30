@@ -273,6 +273,7 @@ const LIMITOPT   = 2 # 1 if elementwise limiting lij, 2 if elementwise limiting 
 const POSDETECT  = 0 # 1 if turn on detection, 0 otherwise
 const LBOUNDTYPE = 1 # 0 if use POSTOL as lower bound, 1 if use 0.1*loworder
 const BCFLUXTYPE = 2 # 0 - Central, 1 - Nondissipative, 2 - dissipative
+const VISCPENTYPE = 0.1 # \in [0,1]: alpha = VISCPENTYPE, -1: -1/Re/v_4
 const TOL = 1e-14
 const POSTOL = 1e-14
 const Nc = 4 # number of components
@@ -291,9 +292,9 @@ const kappa = mu*cp/Pr
 
 "Approximation parameters"
 const N = 3
-const K1D = 16
+const K1D = 20
 const T = 1.0
-const CFL = 0.1#0.5
+const CFL = 0.1
 const NUM_THREADS = Threads.nthreads()
 const BOTTOMRIGHT = N+1
 const TOPRIGHT    = 2*(N+1)
@@ -474,38 +475,36 @@ end
     end
 end
 
-@inline function get_vP(VU,mapP,Fmask,i,iM,xM,yM,k)  # TODO: preallocation
+@inline function get_vP(VUP,VU,mapP,Fmask,i,iM,xM,yM,k,tid)  # TODO: preallocation
     iP,kP = get_infoP(mapP,Fmask,i,k)
 
-    v1P = VU[1,iP,kP]
-    v2P = VU[2,iP,kP]
-    v3P = VU[3,iP,kP]
-    v4P = VU[4,iP,kP]
+    VUP[1,tid] = VU[1,iP,kP]
+    VUP[2,tid] = VU[2,iP,kP]
+    VUP[3,tid] = VU[3,iP,kP]
+    VUP[4,tid] = VU[4,iP,kP]
 
     if is_wall(i,xM,yM)
         if is_vertical_wall(i,xM)
-            v1P =  VU[1,iM,k]
-            v2P = -VU[2,iM,k]
-            v3P =  VU[3,iM,k]
-            v4P =  VU[4,iM,k]
+            VUP[1,tid] =  VU[1,iM,k]
+            VUP[2,tid] = -VU[2,iM,k]
+            VUP[3,tid] =  VU[3,iM,k]
+            VUP[4,tid] =  VU[4,iM,k]
         end
         if is_horizontal_wall(i,yM)
             if is_top_wall(i,yM)    # Top reflective
-                v1P =  VU[1,iM,k]
-                v2P =  VU[2,iM,k]
-                v3P = -VU[3,iM,k]
-                v4P =  VU[4,iM,k]
+                VUP[1,tid] =  VU[1,iM,k]
+                VUP[2,tid] =  VU[2,iM,k]
+                VUP[3,tid] = -VU[3,iM,k]
+                VUP[4,tid] =  VU[4,iM,k]
             end
             if is_bottom_wall(i,yM)
-                v1P =  VU[1,iM,k]
-                v2P = -VU[2,iM,k]
-                v3P = -VU[3,iM,k]
-                v4P =  VU[4,iM,k]
+                VUP[1,tid] =  VU[1,iM,k]
+                VUP[2,tid] = -VU[2,iM,k]
+                VUP[3,tid] = -VU[3,iM,k]
+                VUP[4,tid] =  VU[4,iM,k]
             end
         end
     end
-
-    return v1P,v2P,v3P,v4P
 end
 
 @inline function get_sigmaP(sigmaP,sigma_x,sigma_y,i,iM,xM,yM,k,mapP,Fmask,tid)
@@ -672,7 +671,7 @@ end
 end
 
 function compute_sigma(prealloc,ops,geom)
-    f_x,f_y,theta_x,theta_y,sigma_x,sigma_y,VU,rholog,betalog,U_low,U_high,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr,L_plot,Kxx,Kyy,Kxy,UP,fP,sigmaP = prealloc
+    f_x,f_y,theta_x,theta_y,sigma_x,sigma_y,VU,rholog,betalog,U_low,U_high,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr,L_plot,Kxx,Kyy,Kxy,UP,VUP,fP,sigmaP,viscpen = prealloc
     S0r_vec,S0s_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,
     Sr_vec,Ss_vec,Sr_nnzi,Sr_nnzj,Ss_nnzi,Ss_nnzj,
     Minv,Br_halved,Bs_halved,S_nnzi,S_nnzj = ops
@@ -716,22 +715,20 @@ function compute_sigma(prealloc,ops,geom)
             iM = Fmask[i]
             xM = x[iM,k]
             yM = y[iM,k]
-            v1P,v2P,v3P,v4P = get_vP(VU,mapP,Fmask,i,iM,xM,yM,k)
+            get_vP(VUP,VU,mapP,Fmask,i,iM,xM,yM,k,tid)
 
             if is_face_x(i)
                 BrJ_ii_halved = sJ_ik*Br_halved[iM]
-                theta_x[1,iM,k] = theta_x[1,iM,k]+ BrJ_ii_halved*(v1P)
-                theta_x[2,iM,k] = theta_x[2,iM,k]+ BrJ_ii_halved*(v2P)
-                theta_x[3,iM,k] = theta_x[3,iM,k]+ BrJ_ii_halved*(v3P)
-                theta_x[4,iM,k] = theta_x[4,iM,k]+ BrJ_ii_halved*(v4P)
+                for c = 1:Nc
+                    theta_x[c,iM,k] = theta_x[c,iM,k]+ BrJ_ii_halved*(VUP[c,tid])
+                end
             end                                                      
                                                                      
             if is_face_y(i)                                          
                 BsJ_ii_halved = sJ_ik*Bs_halved[iM]                       
-                theta_y[1,iM,k] = theta_y[1,iM,k]+ BsJ_ii_halved*(v1P)
-                theta_y[2,iM,k] = theta_y[2,iM,k]+ BsJ_ii_halved*(v2P)
-                theta_y[3,iM,k] = theta_y[3,iM,k]+ BsJ_ii_halved*(v3P)
-                theta_y[4,iM,k] = theta_y[4,iM,k]+ BsJ_ii_halved*(v4P)
+                for c = 1:Nc
+                    theta_y[c,iM,k] = theta_y[c,iM,k]+ BsJ_ii_halved*(VUP[c,tid])
+                end
             end
 
         end
@@ -758,7 +755,7 @@ function compute_sigma(prealloc,ops,geom)
 end
 
 function rhs_IDP!(U,rhsU,t,dtl,prealloc,ops,geom,in_s1)
-    f_x,f_y,theta_x,theta_y,sigma_x,sigma_y,VU,rholog,betalog,U_low,U_high,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr,L_plot,Kxx,Kyy,Kxy,UP,fP,sigmaP = prealloc
+    f_x,f_y,theta_x,theta_y,sigma_x,sigma_y,VU,rholog,betalog,U_low,U_high,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr,L_plot,Kxx,Kyy,Kxy,UP,VUP,fP,sigmaP,viscpen = prealloc
     S0r_vec,S0s_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,
     Sr_vec,Ss_vec,Sr_nnzi,Sr_nnzj,Ss_nnzi,Ss_nnzj,
     Minv,Br_halved,Bs_halved,S_nnzi,S_nnzj = ops
@@ -956,18 +953,39 @@ function rhs_IDP!(U,rhsU,t,dtl,prealloc,ops,geom,in_s1)
             rhouM = U[2,iM,k]
             rhovM = U[3,iM,k]
             EM    = U[4,iM,k]
+            v2M   = VU[2,iM,k]
+            v3M   = VU[3,iM,k]
+            v4M   = VU[4,iM,k]
             uM    = rhouM/rhoM
             vM    = rhovM/rhoM
             pM    = pfun(rhoM,rhouM,rhovM,EM)
 
             get_valP(UP,fP,sigmaP,U,f_x,f_y,sigma_x,sigma_y,mapP,Fmask,i,iM,xM,yM,uM,vM,k,tid)
+            get_vP(VUP,VU,mapP,Fmask,i,iM,xM,yM,k,tid)
             λ = λf_arr[i,k]
+
+            alpha = 0.0
+            if (VISCPENTYPE == -1)
+                alpha = -1/Re/VU[4,iM,k]
+            elseif ((VISCPENTYPE >= 0.0) && (VISCPENTYPE <= 1.0))
+                alpha = VISCPENTYPE
+            end
+            for c = 2:Nc
+                viscpen[c,tid] = alpha*(VUP[c,tid]-VU[c,iM,k])
+            end
+            if (is_wall(i,xM,yM))
+                viscpen[2,tid] = -alpha*(VUP[2,tid]-VU[2,iM,k])
+                viscpen[3,tid] = -alpha*(VUP[3,tid]-VU[3,iM,k])
+                viscpen[4,tid] =  alpha*((VUP[2,tid]+v2M)*(VUP[2,tid]-v2M) 
+                                       + (VUP[3,tid]+v3M)*(VUP[3,tid]-v3M) 
+                                       + (VUP[4,tid]-v4M)*(VUP[4,tid]-v4M))/2/v4M
+            end
 
             # flux in x direction
             if is_face_x(i)
                 for c = 1:Nc
                     F_P[c,i,tid] = (BrJ_ii_halved*(f_x[c,iM,k]+fP[c,1,tid]-sigma_x[c,iM,k]-sigmaP[c,1,tid])
-                                   -λ*(UP[c,tid]-U[c,iM,k]) ) 
+                                   -λ*(UP[c,tid]-U[c,iM,k]) - 2*abs(BrJ_ii_halved)*viscpen[c,tid]) 
                 end
             end
 
@@ -975,7 +993,7 @@ function rhs_IDP!(U,rhsU,t,dtl,prealloc,ops,geom,in_s1)
             if is_face_y(i)
                 for c = 1:Nc
                     F_P[c,i,tid] = (BsJ_ii_halved*(f_y[c,iM,k]+fP[c,2,tid]-sigma_y[c,iM,k]-sigmaP[c,2,tid])
-                                   -λ*(UP[c,tid]-U[c,iM,k]) ) 
+                                   -λ*(UP[c,tid]-U[c,iM,k]) - 2*abs(BsJ_ii_halved)*viscpen[c,tid]) 
                 end
             end
 
@@ -1012,14 +1030,14 @@ function rhs_IDP!(U,rhsU,t,dtl,prealloc,ops,geom,in_s1)
                     # flux in x direction
                     if is_face_x(i)
                         for c = 1:Nc
-                            F_P[c,i,tid] -= BrJ_ii_halved*(sigma_x[c,iM,k]+sigmaP[c,1,tid]) 
+                            F_P[c,i,tid] -= BrJ_ii_halved*(sigma_x[c,iM,k]+sigmaP[c,1,tid]) + 2*abs(BrJ_ii_halved)*viscpen[c,tid]
                         end
                     end
 
                     # flux in y direction
                     if is_face_y(i)
                         for c = 1:Nc
-                            F_P[c,i,tid] -= BsJ_ii_halved*(sigma_y[c,iM,k]+sigmaP[c,2,tid]) 
+                            F_P[c,i,tid] -= BsJ_ii_halved*(sigma_y[c,iM,k]+sigmaP[c,2,tid]) + 2*abs(BsJ_ii_halved)*viscpen[c,tid]
                         end
                     end
                 end
@@ -1340,6 +1358,7 @@ F_low   = zeros(Float64,Nc,Np,Np,NUM_THREADS)
 F_high  = zeros(Float64,Nc,Np,Np,NUM_THREADS)
 F_P     = zeros(Float64,Nc,Nfp,NUM_THREADS)
 UP      = zeros(Float64,Nc,NUM_THREADS)
+VUP     = zeros(Float64,Nc,NUM_THREADS)
 fP      = zeros(Float64,Nc,2,NUM_THREADS)
 sigmaP  = zeros(Float64,Nc,2,NUM_THREADS)
 L       =  ones(Float64,S_nnz_hv,NUM_THREADS)
@@ -1351,8 +1370,9 @@ L_plot   = zeros(Float64,K)
 Kxx      = [zeros(MMatrix{Nc,Nc,Float64}) for _ in 1:NUM_THREADS]
 Kyy      = [zeros(MMatrix{Nc,Nc,Float64}) for _ in 1:NUM_THREADS]
 Kxy      = [zeros(MMatrix{Nc,Nc,Float64}) for _ in 1:NUM_THREADS]
+viscpen  = zeros(Float64,Nc,NUM_THREADS)
 
-prealloc = (f_x,f_y,theta_x,theta_y,sigma_x,sigma_y,VU,rholog,betalog,U_low,U_high,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr,L_plot,Kxx,Kyy,Kxy,UP,fP,sigmaP)
+prealloc = (f_x,f_y,theta_x,theta_y,sigma_x,sigma_y,VU,rholog,betalog,U_low,U_high,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr,L_plot,Kxx,Kyy,Kxy,UP,VUP,fP,sigmaP,viscpen)
 ops      = (S0r_vec,S0s_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,
             Sr_vec,Ss_vec,Sr_nnzi,Sr_nnzj,Ss_nnzi,Ss_nnzj,
             Minv,Br_halved,Bs_halved,S_nnzi,S_nnzj)
@@ -1432,7 +1452,7 @@ end
 # catch err
 # end
 
-gif(anim,"fig/dg2D_CNS_quad_testBC/N=$N,K1D=$K1D,T=$T,LIMITOPT=$LIMITOPT,POSDETECT=$POSDETECT,LBOUNDTYPE=$LBOUNDTYPE,BCFLUXTYPE=$BCFLUXTYPE.gif")
+gif(anim,"fig/dg2D_CNS_quad_testBC/N=$N,K1D=$K1D,T=$T,LIMITOPT=$LIMITOPT,POSDETECT=$POSDETECT,LBOUNDTYPE=$LBOUNDTYPE,BCFLUXTYPE=$BCFLUXTYPE,VISCPENTYPE=$VISCPENTYPE,Re=$Re.gif")
 
 rho = U[1,:,:]
 rhou = U[2,:,:]
@@ -1447,7 +1467,7 @@ yp   = Vp*y
 rhop = Vp*rho
 vmagp = Vp*vmag
 scatter(xp,yp,vmagp,zcolor=vmagp,camera=(0,90))
-savefig("fig/dg2D_CNS_quad_testBC/N=$N,K1D=$K1D,T=$T,LIMITOPT=$LIMITOPT,POSDETECT=$POSDETECT,LBOUNDTYPE=$LBOUNDTYPE,BCFLUXTYPE=$BCFLUXTYPE.png")
+savefig("fig/dg2D_CNS_quad_testBC/N=$N,K1D=$K1D,T=$T,LIMITOPT=$LIMITOPT,POSDETECT=$POSDETECT,LBOUNDTYPE=$LBOUNDTYPE,BCFLUXTYPE=$BCFLUXTYPE,VISCPENTYPE=$VISCPENTYPE,Re=$Re.png")
 
 end #muladd
 
