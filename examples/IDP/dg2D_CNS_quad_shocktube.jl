@@ -297,7 +297,7 @@ const kappa = mu*cp/Pr
 
 "Approximation parameters"
 const N = 3
-const K1D = 120
+const K1D = 30
 const T = 1.0
 const CFL = 0.5
 const CFLvisc = 0.1
@@ -971,6 +971,7 @@ function rhs_IDP!(U,rhsU,t,dtl,prealloc,ops,geom,in_s1)
             pM    = pfun(rhoM,rhouM,rhovM,EM)
 
             get_valP(UP,fP,sigmaP,U,f_x,f_y,sigma_x,sigma_y,mapP,Fmask,i,iM,xM,yM,uM,vM,k,tid)
+            get_vP(VUP,VU,mapP,Fmask,i,iM,xM,yM,k,tid)
             λ = λf_arr[i,k]
 
             alpha = 0.0
