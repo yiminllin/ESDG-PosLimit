@@ -275,13 +275,14 @@ const POSDETECT  = 0 # 1 if turn on detection, 0 otherwise
 const LBOUNDTYPE = 0.1 # 0 if use POSTOL as lower bound, if > 0, use LBOUNDTYPE*loworder
 const BCFLUXTYPE = 2 # 0 - Central, 1 - Nondissipative, 2 - dissipative
 const VISCPENTYPE = 0.0 # \in [0,1]: alpha = VISCPENTYPE, -1: -1/Re/v_4
+const IFSHOCKCAPTURE = true
 const TOL = 1e-12
 const POSTOL = 1e-12
 const Nc = 4 # number of components
 const SAVEINT = 1000
 const USEPLOTPT = true
-const MESHTYPE  = 0   # 0 - uniform mesh, 1 - nonuniform mesh 
-const OUTPUTVTK = false
+const MESHTYPE  = 1   # 0 - uniform mesh, 1 - nonuniform mesh 
+const OUTPUTVTK = true
 
 @show LIMITOPT
 @show LBOUNDTYPE
@@ -305,6 +306,12 @@ const NUM_THREADS = Threads.nthreads()
 const BOTTOMRIGHT = N+1
 const TOPRIGHT    = 2*(N+1)
 const TOPLEFT     = 3*(N+1)
+
+const TN       = 0.5*10^(-1.8*(N+1)^0.25)
+const alphamin = 0.001
+const alphamax = 0.75
+const alphaE0  = 0.0001
+const s_factor = log((1-alphaE0)/alphaE0)
 
 "Mesh related variables"
 VX, VY, EToV = uniform_quad_mesh(2*K1D,K1D)
@@ -681,10 +688,10 @@ end
 end
 
 function compute_sigma(prealloc,ops,geom)
-    f_x,f_y,theta_x,theta_y,sigma_x,sigma_y,VU,rholog,betalog,U_low,U_high,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr,L_plot,Kxx,Kyy,Kxy,UP,VUP,fP,sigmaP,viscpen = prealloc
+    f_x,f_y,theta_x,theta_y,sigma_x,sigma_y,VU,rholog,betalog,U_low,U_high,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr,L_plot,Kxx,Kyy,Kxy,UP,VUP,fP,sigmaP,viscpen,epsN,blending = prealloc
     S0r_vec,S0s_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,
     Sr_vec,Ss_vec,Sr_nnzi,Sr_nnzj,Ss_nnzi,Ss_nnzj,
-    Minv,Br_halved,Bs_halved,S_nnzi,S_nnzj = ops
+    Minv,Br_halved,Bs_halved,S_nnzi,S_nnzj,VDM = ops
     mapP,Fmask,x,y,rxJ,syJ,J,sJ = geom
 
     @batch for k = 1:K
@@ -765,10 +772,10 @@ function compute_sigma(prealloc,ops,geom)
 end
 
 function rhs_IDP!(U,rhsU,t,dtl,prealloc,ops,geom,in_s1)
-    f_x,f_y,theta_x,theta_y,sigma_x,sigma_y,VU,rholog,betalog,U_low,U_high,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr,L_plot,Kxx,Kyy,Kxy,UP,VUP,fP,sigmaP,viscpen = prealloc
+    f_x,f_y,theta_x,theta_y,sigma_x,sigma_y,VU,rholog,betalog,U_low,U_high,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr,L_plot,Kxx,Kyy,Kxy,UP,VUP,fP,sigmaP,viscpen,epsN,blending = prealloc
     S0r_vec,S0s_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,
     Sr_vec,Ss_vec,Sr_nnzi,Sr_nnzj,Ss_nnzi,Ss_nnzj,
-    Minv,Br_halved,Bs_halved,S_nnzi,S_nnzj = ops
+    Minv,Br_halved,Bs_halved,S_nnzi,S_nnzj,VDM = ops
     mapP,Fmask,x,y,rxJ,syJ,J,sJ = geom
 
     fill!(rhsU,0.0)
@@ -780,6 +787,7 @@ function rhs_IDP!(U,rhsU,t,dtl,prealloc,ops,geom,in_s1)
             E    = U[4,i,k]
             p           = pfun(rho,rhou,rhov,E)
             v1,v2,v3,v4 = entropyvar(rho,rhou,rhov,E,p)
+            epsN[i,k]  = rho*p
             f_x[1,i,k] = rhou
             f_x[2,i,k] = rhou^2/rho+p
             f_x[3,i,k] = rhou*rhov/rho
@@ -794,6 +802,35 @@ function rhs_IDP!(U,rhsU,t,dtl,prealloc,ops,geom,in_s1)
             VU[4,i,k]   = v4
             rholog[i,k]  = log(rho)
             betalog[i,k] = log(rho/(2*p))
+        end
+    end
+
+    if (IFSHOCKCAPTURE)
+        epsN .= VDM\epsN
+
+        @batch for k = 1:K
+            count = 1
+            modeN_energy = 0.0
+            total_energy = 0.0
+            for j = 0:N
+                for i = 0:N
+                    energy = epsN[count,k]^2
+                    if ((i == N) || (j == N))
+                        modeN_energy += energy
+                    end
+                    total_energy += energy
+                    count += 1
+                end
+            end
+            alpha = 1/(1+exp(-s_factor/TN*(modeN_energy/total_energy-TN)))
+            if (alpha < alphamin)
+                blending[k] = 0.0
+            elseif (alpha >= alphamin) && (alpha <= 1-alphamin)
+                blending[k] = alpha
+            else
+                blending[k] = 1.0
+            end
+            blending[k] = min(1.0-blending[k],alphamax)
         end
     end
 
@@ -1173,6 +1210,11 @@ function rhs_IDP!(U,rhsU,t,dtl,prealloc,ops,geom,in_s1)
         for i = 1:S_nnz_hv
             l_e = min(l_e,L[i,tid])
         end
+        if (IFSHOCKCAPTURE)
+            l_e = min(l_e,blending[k])
+        end
+        # TODO: hardcoded
+        blending[k] = l_e
         l_em1 = l_e-1.0
         
         if is_H_positive
@@ -1226,7 +1268,7 @@ const K  = size(x,2)
 const Nfaces = 4
 
 # # Make domain periodic
-@unpack Vf = rd
+@unpack Vf,VDM = rd
 @unpack xf,yf,mapM,mapP,mapB,J,rxJ,syJ,sJ = md
 # LX,LY = (x->maximum(x)-minimum(x)).((VX,VY)) # find lengths of domain
 # mapPB = build_periodic_boundary_maps(xf,yf,LX,LY,Nfaces*K,mapM,mapP,mapB)
@@ -1354,6 +1396,7 @@ end
 rhsU   = zeros(Float64,size(U))
 f_x    = zeros(Float64,size(U))
 f_y    = zeros(Float64,size(U))
+epsN    = zeros(Float64,Np,K)
 sigma_x = zeros(Float64,size(U))
 sigma_y = zeros(Float64,size(U))
 theta_x = zeros(Float64,size(U))
@@ -1380,11 +1423,12 @@ Kxx      = [zeros(MMatrix{Nc,Nc,Float64}) for _ in 1:NUM_THREADS]
 Kyy      = [zeros(MMatrix{Nc,Nc,Float64}) for _ in 1:NUM_THREADS]
 Kxy      = [zeros(MMatrix{Nc,Nc,Float64}) for _ in 1:NUM_THREADS]
 viscpen  = zeros(Float64,Nc,NUM_THREADS)
+blending = ones(Float64,K)
 
-prealloc = (f_x,f_y,theta_x,theta_y,sigma_x,sigma_y,VU,rholog,betalog,U_low,U_high,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr,L_plot,Kxx,Kyy,Kxy,UP,VUP,fP,sigmaP,viscpen)
+prealloc = (f_x,f_y,theta_x,theta_y,sigma_x,sigma_y,VU,rholog,betalog,U_low,U_high,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr,L_plot,Kxx,Kyy,Kxy,UP,VUP,fP,sigmaP,viscpen,epsN,blending)
 ops      = (S0r_vec,S0s_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,
             Sr_vec,Ss_vec,Sr_nnzi,Sr_nnzj,Ss_nnzi,Ss_nnzj,
-            Minv,Br_halved,Bs_halved,S_nnzi,S_nnzj)
+            Minv,Br_halved,Bs_halved,S_nnzi,S_nnzj,VDM)
 geom     = (mapP,Fmask,x,y,rxJ,syJ,J,sJ)
 
 function schlieren_visualization!(shcl,U,rhot,rhof,rhoP,rx,sy,Vf,LIFT,J,nxJ,nyJ)
@@ -1410,7 +1454,7 @@ function construct_vtk_mesh!(x_vtk,y_vtk)
     end
 end
 
-function construct_vtk_file!(U,sch,Uvtk,schlvtk,pvdfile,xvtk,yvtk,t)
+function construct_vtk_file!(U,sch,blending,Uvtk,schlvtk,blending_vtk,pvdfile,xvtk,yvtk,t)
     vtk_grid("$(OUTPUTPATH)/dg2D_CNS_quad_shocktube_t=$t",xvtk,yvtk) do vtk
         for k = 1:K
             iK = mod1(k,2*K1D)
@@ -1419,12 +1463,14 @@ function construct_vtk_file!(U,sch,Uvtk,schlvtk,pvdfile,xvtk,yvtk,t)
                 Uvtk[c,(iK-1)*(N+1)+1:iK*(N+1),(jK-1)*(N+1)+1:jK*(N+1)] = U[c,:,k]
             end
             schlvtk[(iK-1)*(N+1)+1:iK*(N+1),(jK-1)*(N+1)+1:jK*(N+1)] = sch[:,k]
+            blending_vtk[(iK-1)*(N+1)+1:iK*(N+1),(jK-1)*(N+1)+1:jK*(N+1)] .= blending[k]
         end    
         vtk["rho"]  = Uvtk[1,:,:] 
         vtk["rhou"] = Uvtk[2,:,:] 
         vtk["rhov"] = Uvtk[3,:,:] 
         vtk["E"]    = Uvtk[4,:,:] 
         vtk["schl"] = schlvtk
+        vtk["blending"] = blending_vtk
 
         pvdfile[t]  = vtk
     end
@@ -1434,6 +1480,7 @@ x_vtk    = zeros(Float64,2*(N+1)*K1D,(N+1)*K1D)    # TODO: hardcoded domain size
 y_vtk    = zeros(Float64,2*(N+1)*K1D,(N+1)*K1D)
 U_vtk    = zeros(Float64,Nc,2*(N+1)*K1D,(N+1)*K1D)
 schl_vtk = zeros(Float64,2*(N+1)*K1D,(N+1)*K1D)
+blending_vtk = zeros(Float64,2*(N+1)*K1D,(N+1)*K1D)
 shcl = zeros(Float64,Np,K)
 rhot = zeros(Float64,Np,K)
 rhof = zeros(Float64,Nfp,K)
@@ -1454,6 +1501,7 @@ i = 1
 Uhist    = []
 thist    = []
 schlhist = []
+blendinghist = []
 
 # for i = 1:5
 #     dt = dt0
@@ -1491,8 +1539,9 @@ try
         schlieren_visualization!(shcl,U,rhot,rhof,rhoP,rx,sy,Vf,LIFT,J,nxJ,nyJ)
         push!(Uhist,copy(U))
         push!(schlhist,copy(shcl))
+        push!(blendinghist,copy(blending))
         if (OUTPUTVTK)
-            construct_vtk_file!(U,shcl,U_vtk,schl_vtk,pvd,x_vtk,y_vtk,t)
+            construct_vtk_file!(U,shcl,blending,U_vtk,schl_vtk,blending_vtk,pvd,x_vtk,y_vtk,t)
         end
     end
 end
@@ -1503,21 +1552,22 @@ shcl = zeros(Float64,Np,K)
 schlieren_visualization!(shcl,U,rhot,rhof,rhoP,rx,sy,Vf,LIFT,J,nxJ,nyJ)
 push!(Uhist,copy(U))
 push!(schlhist,shcl)
+push!(blendinghist,copy(blending))
 
 if (OUTPUTVTK)
-    construct_vtk_file!(U,shcl,U_vtk,schl_vtk,pvd,x_vtk,y_vtk,t)
+    construct_vtk_file!(U,shcl,blending,U_vtk,schl_vtk,blending_vtk,pvd,x_vtk,y_vtk,t)
     vtk_save(pvd)
 end
 
 # df = DataFrame(N=Int64[],K=Int64[],T=Float64[],t=Float64[],
 #                CFL=Float64[],dt0=Float64[],
 #                γ=Float64[],Re=Float64[],Pr=Float64[],VX=Array{Float64,1}[],VY=Array{Float64,1}[],EToV=Array{Int64,2}[],
-#                LIMITOPT=Int64[],POSDETECT=Int64[],LBOUNDTYPE=Float64[],BCFLUXTYPE=Int64[],MESHTYPE=Int64[],
+#                LIMITOPT=Int64[],POSDETECT=Int64[],LBOUNDTYPE=Float64[],BCFLUXTYPE=Int64[],MESHTYPE=Int64[],IFSHOCKCAPTURE=Bool[],
 #                VISCPENTYPE=Float64[],POSTOL=Float64[],SAVEINT=Int64[],
-#                Uhist=Array{Any,1}[],schlhist=Array{Any,1}[],
+#                Uhist=Array{Any,1}[],schlhist=Array{Any,1}[],blendinghist=Array{Any,1}[],
 #                thist=Array{Any,1}[],dt_hist=Array{Any,1}[])
 df = load("$(OUTPUTPATH)/dg2D_CNS_quad_shocktube.jld2","data")
-push!(df,(N,K,T,t,CFL,dt0,γ,Re,Pr,VX,VY,EToV,LIMITOPT,POSDETECT,LBOUNDTYPE,BCFLUXTYPE,MESHTYPE,VISCPENTYPE,POSTOL,SAVEINT,Uhist,schlhist,thist,dt_hist))
+push!(df,(N,K,T,t,CFL,dt0,γ,Re,Pr,VX,VY,EToV,LIMITOPT,POSDETECT,LBOUNDTYPE,BCFLUXTYPE,MESHTYPE,IFSHOCKCAPTURE,VISCPENTYPE,POSTOL,SAVEINT,Uhist,schlhist,blendinghist,thist,dt_hist))
 save("$(OUTPUTPATH)/dg2D_CNS_quad_shocktube.jld2","data",df)
 
 end #muladd

@@ -196,12 +196,13 @@ end
 end
 
 const OUTPUTPATH = "/home/yiminlin/Desktop/dg2D_euler_quad_dmr_output"
-const SAVEINT    = 200
+const SAVEINT    = 1000
 
 const LIMITOPT = 2 # 1 if elementwise limiting lij, 2 if elementwise limiting li, 3 if nodewise
 const POSDETECT  = 0 # 1 if turn on detection, 0 otherwise
 const LBOUNDTYPE = 0.1 # 0 if use POSTOL as lower bound, if > 0, use LBOUNDTYPE*loworder
 const BCFLUXTYPE = 2 # 0 - Central, 1 - Nondissipative, 2 - dissipative
+const IFSHOCKCAPTURE = true
 const TOL = 5e-16
 const POSTOL = 1e-14
 const WALLPT = 1.0/6.0
@@ -217,6 +218,11 @@ const NUM_THREADS = Threads.nthreads()
 const BOTTOMRIGHT = N+1
 const TOPRIGHT    = 2*(N+1)
 const TOPLEFT     = 3*(N+1)
+
+const TN       = 0.5*10^(-1.8*(N+1)^0.25)
+const alphamin = 0.001
+const alphaE0  = 0.0001
+const s_factor = log((1-alphaE0)/alphaE0)
 
 # Initial condition 2D shocktube
 const γ = 1.4
@@ -553,8 +559,8 @@ end
 end
 
 function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
-    f_x,f_y,rholog,betalog,U_low,U_high,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr = prealloc
-    S0xJ_vec,S0yJ_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,SxJ_db_vec,SyJ_db_vec,Sr_nnzi,Sr_nnzj,Ss_nnzi,Ss_nnzj,MJ_inv,BrJ_halved,BsJ_halved,coeff_arr,S_nnzi,S_nnzj = ops
+    f_x,f_y,rholog,betalog,U_low,U_high,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr,epsN,blending = prealloc
+    S0xJ_vec,S0yJ_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,SxJ_db_vec,SyJ_db_vec,Sr_nnzi,Sr_nnzj,Ss_nnzi,Ss_nnzj,MJ_inv,BrJ_halved,BsJ_halved,coeff_arr,S_nnzi,S_nnzj,VDM = ops
     mapP,Fmask,x,y = geom
 
     fill!(rhsU,0.0)
@@ -565,6 +571,7 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
             rhov = U[3,i,k]
             E    = U[4,i,k]
             p          = pfun(rho,rhou,rhov,E)
+            epsN[i,k]  = rho*p
             # if p < 0.0 || rho < 0.0
             #     @show " ========= "
             #     @show p, rho
@@ -580,6 +587,35 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
             f_y[4,i,k] = E*rhov/rho+p*rhov/rho
             rholog[i,k]  = log(rho)
             betalog[i,k] = log(rho/(2*p))
+        end
+    end
+
+    if (IFSHOCKCAPTURE)
+        epsN .= VDM\epsN
+
+        @batch for k = 1:K
+            count = 1
+            modeN_energy = 0.0
+            total_energy = 0.0
+            for j = 0:N
+                for i = 0:N
+                    energy = epsN[count,k]^2
+                    if ((i == N) || (j == N))
+                        modeN_energy += energy
+                    end
+                    total_energy += energy
+                    count += 1
+                end
+            end
+            alpha = 1/(1+exp(-s_factor/TN*(modeN_energy/total_energy-TN)))
+            if (alpha < alphamin)
+                blending[k] = 0.0
+            elseif (alpha >= alphamin) && (alpha <= 1-alphamin)
+                blending[k] = alpha
+            else
+                blending[k] = 1.0
+            end
+            blending[k] = 1.0-blending[k]
         end
     end
 
@@ -909,6 +945,11 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
         for i = 1:S_nnz_hv
             l_e = min(l_e,L[i,tid])
         end
+        if (IFSHOCKCAPTURE)
+            l_e = min(l_e,blending[k])
+        end
+        # TODO: hardcoded
+        blending[k] = l_e
         l_em1 = l_e-1.0
 
         if is_H_positive
@@ -950,7 +991,7 @@ function rhs_IDP!(U,rhsU,t,dt,prealloc,ops,geom,in_s1)
     return dt
 end
 
-@unpack Vf,Dr,Ds,LIFT = rd
+@unpack Vf,Dr,Ds,LIFT,VDM = rd
 md = init_mesh((VX,VY),EToV,rd)
 @unpack xf,yf,mapM,mapP,mapB,nxJ,nyJ,x,y = md
 xb,yb = (x->x[mapB]).((xf,yf))
@@ -1087,6 +1128,7 @@ end
 rhsU   = zeros(Float64,size(U))
 f_x    = zeros(Float64,size(U))
 f_y    = zeros(Float64,size(U))
+epsN    = zeros(Float64,Np,K)
 rholog  = zeros(Float64,Np,K)
 betalog = zeros(Float64,Np,K)
 U_low   = zeros(Float64,Nc,Np,NUM_THREADS)
@@ -1099,11 +1141,12 @@ wspd_arr = zeros(Float64,Np,2,K)
 λ_arr    = zeros(Float64,S0r_nnz_hv,2,K) # Assume S0r and S0s has same number of nonzero entries
 λf_arr   = zeros(Float64,Nfp,K)
 dii_arr  = zeros(Float64,Np,K)
+blending = ones(Float64,K)
 
-prealloc = (f_x,f_y,rholog,betalog,U_low,U_high,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr)
+prealloc = (f_x,f_y,rholog,betalog,U_low,U_high,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr,epsN,blending)
 ops      = (S0xJ_vec,  S0yJ_vec,  S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,
             SxJ_db_vec,SyJ_db_vec,Sr_nnzi, Sr_nnzj, Ss_nnzi, Ss_nnzj,
-            MJ_inv,BrJ_halved,BsJ_halved,coeff_arr,S_nnzi,S_nnzj)
+            MJ_inv,BrJ_halved,BsJ_halved,coeff_arr,S_nnzi,S_nnzj,VDM)
 geom     = (mapP,Fmask,x,y)
 
 
@@ -1132,7 +1175,7 @@ function construct_vtk_mesh!(x_vtk,y_vtk)
     end
 end
 
-function construct_vtk_file!(U,Uvtk,pvdfile,xvtk,yvtk,t)
+function construct_vtk_file!(U,blending,Uvtk,blending_vtk,pvdfile,xvtk,yvtk,t)
     vtk_grid("$(OUTPUTPATH)/dg2D_euler_quad_dmr_LBOUNDTYPE=$(LBOUNDTYPE)_t=$t",xvtk,yvtk) do vtk
         for k = 1:K
             iK = mod1(k,Int(XLENGTH*K1D))
@@ -1140,11 +1183,13 @@ function construct_vtk_file!(U,Uvtk,pvdfile,xvtk,yvtk,t)
             for c = 1:Nc
                 Uvtk[c,(iK-1)*(N+1)+1:iK*(N+1),(jK-1)*(N+1)+1:jK*(N+1)] = U[c,:,k]
             end
+            blending_vtk[(iK-1)*(N+1)+1:iK*(N+1),(jK-1)*(N+1)+1:jK*(N+1)] .= blending[k]
         end    
         vtk["rho"]  = Uvtk[1,:,:] 
         vtk["rhou"] = Uvtk[2,:,:] 
         vtk["rhov"] = Uvtk[3,:,:] 
         vtk["E"]    = Uvtk[4,:,:] 
+        vtk["blending"] = blending_vtk
 
         pvdfile[t]  = vtk
     end
@@ -1153,6 +1198,7 @@ end
 x_vtk    = zeros(Float64,Int(XLENGTH*(N+1)*K1D),(N+1)*K1D)    # TODO: hardcoded domain size
 y_vtk    = zeros(Float64,Int(XLENGTH*(N+1)*K1D),(N+1)*K1D)
 U_vtk    = zeros(Float64,Nc,Int(XLENGTH*(N+1)*K1D),(N+1)*K1D)
+blending_vtk = zeros(Float64,Int(XLENGTH*(N+1)*K1D),(N+1)*K1D)
 
 construct_vtk_mesh!(x_vtk,y_vtk)
 pvd = paraview_collection("$(OUTPUTPATH)/dg2D_euler_quad_dmr_LBOUNDTYPE=$(LBOUNDTYPE).pvd")
@@ -1168,6 +1214,7 @@ dt = dt0
 dt_hist = []
 i = 1
 Uhist = []
+blendinghist = []
 thist = []
 
 mapN = collect(reshape(1:Np*K,Np,K))
@@ -1246,24 +1293,26 @@ end
             end
         end
         push!(Uhist,copy(U))
-        construct_vtk_file!(U,U_vtk,pvd,x_vtk,y_vtk,t)
+        push!(blendinghist,copy(blending))
+        construct_vtk_file!(U,blending,U_vtk,blending_vtk,pvd,x_vtk,y_vtk,t)
     end
 end
 
 push!(Uhist,copy(U))
-construct_vtk_file!(U,U_vtk,pvd,x_vtk,y_vtk,t)
+push!(blendinghist,copy(blending))
+construct_vtk_file!(U,blending,U_vtk,blending_vtk,pvd,x_vtk,y_vtk,t)
 
 vtk_save(pvd)
 
 df = DataFrame(N=Int64[],K=Int64[],T=Float64[],t=Float64[],
                CFL=Float64[],dt0=Float64[],
                γ=Float64[],
-               LIMITOPT=Int64[],POSDETECT=Int64[],LBOUNDTYPE=Float64[],BCFLUXTYPE=Int64[],
+               LIMITOPT=Int64[],POSDETECT=Int64[],LBOUNDTYPE=Float64[],BCFLUXTYPE=Int64[],IFSHOCKCAPTURE=Bool[],
                POSTOL=Float64[],
-               Uhist=Array{Any,1}[],
+               Uhist=Array{Any,1}[],blendinghist=Array{Any,1}[],
                thist=Array{Any,1}[],dt_hist=Array{Any,1}[])
 # df = load("$(OUTPUTPATH)/dg2D_euler_quad_dmr.jld2","data")
-push!(df,(N,K,T,t,CFL,dt0,γ,LIMITOPT,POSDETECT,LBOUNDTYPE,BCFLUXTYPE,POSTOL,Uhist,thist,dt_hist))
+push!(df,(N,K,T,t,CFL,dt0,γ,LIMITOPT,POSDETECT,LBOUNDTYPE,BCFLUXTYPE,IFSHOCKCAPTURE,POSTOL,Uhist,blendinghist,thist,dt_hist))
 save("$(OUTPUTPATH)/dg2D_euler_quad_dmr.jld2","data",df)
 
 end #muladd
