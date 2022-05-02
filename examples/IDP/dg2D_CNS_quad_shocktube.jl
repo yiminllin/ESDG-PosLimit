@@ -688,10 +688,10 @@ end
 end
 
 function compute_sigma(prealloc,ops,geom)
-    f_x,f_y,theta_x,theta_y,sigma_x,sigma_y,VU,rholog,betalog,U_low,U_high,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr,L_plot,Kxx,Kyy,Kxy,UP,VUP,fP,sigmaP,viscpen,epsN,blending = prealloc
+    f_x,f_y,theta_x,theta_y,sigma_x,sigma_y,VU,rholog,betalog,U_low,U_high,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr,L_plot,Kxx,Kyy,Kxy,UP,VUP,fP,sigmaP,viscpen,rhop,epsN,blending = prealloc
     S0r_vec,S0s_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,
     Sr_vec,Ss_vec,Sr_nnzi,Sr_nnzj,Ss_nnzi,Ss_nnzj,
-    Minv,Br_halved,Bs_halved,S_nnzi,S_nnzj,VDM = ops
+    Minv,Br_halved,Bs_halved,S_nnzi,S_nnzj,VDMinv = ops
     mapP,Fmask,x,y,rxJ,syJ,J,sJ = geom
 
     @batch for k = 1:K
@@ -772,10 +772,10 @@ function compute_sigma(prealloc,ops,geom)
 end
 
 function rhs_IDP!(U,rhsU,t,dtl,prealloc,ops,geom,in_s1)
-    f_x,f_y,theta_x,theta_y,sigma_x,sigma_y,VU,rholog,betalog,U_low,U_high,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr,L_plot,Kxx,Kyy,Kxy,UP,VUP,fP,sigmaP,viscpen,epsN,blending = prealloc
+    f_x,f_y,theta_x,theta_y,sigma_x,sigma_y,VU,rholog,betalog,U_low,U_high,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr,L_plot,Kxx,Kyy,Kxy,UP,VUP,fP,sigmaP,viscpen,rhop,epsN,blending = prealloc
     S0r_vec,S0s_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,
     Sr_vec,Ss_vec,Sr_nnzi,Sr_nnzj,Ss_nnzi,Ss_nnzj,
-    Minv,Br_halved,Bs_halved,S_nnzi,S_nnzj,VDM = ops
+    Minv,Br_halved,Bs_halved,S_nnzi,S_nnzj,VDMinv = ops
     mapP,Fmask,x,y,rxJ,syJ,J,sJ = geom
 
     fill!(rhsU,0.0)
@@ -787,7 +787,7 @@ function rhs_IDP!(U,rhsU,t,dtl,prealloc,ops,geom,in_s1)
             E    = U[4,i,k]
             p           = pfun(rho,rhou,rhov,E)
             v1,v2,v3,v4 = entropyvar(rho,rhou,rhov,E,p)
-            epsN[i,k]  = rho*p
+            rhop[i,k]  = rho*p
             f_x[1,i,k] = rhou
             f_x[2,i,k] = rhou^2/rho+p
             f_x[3,i,k] = rhou*rhov/rho
@@ -806,7 +806,9 @@ function rhs_IDP!(U,rhsU,t,dtl,prealloc,ops,geom,in_s1)
     end
 
     if (IFSHOCKCAPTURE)
-        epsN .= VDM\epsN
+        @batch for k = 1:K
+            @views mul!(epsN[:,k],VDMinv,rhop[:,k])
+        end
 
         @batch for k = 1:K
             count = 1
@@ -1274,6 +1276,7 @@ const Nfaces = 4
 # mapPB = build_periodic_boundary_maps(xf,yf,LX,LY,Nfaces*K,mapM,mapP,mapB)
 # mapP[mapB] = mapPB
 # @pack! md = mapP
+VDMinv = inv(VDM)
 
 const Np = (N+1)*(N+1)
 const Nfp = Nfaces*(N+1)
@@ -1396,6 +1399,7 @@ end
 rhsU   = zeros(Float64,size(U))
 f_x    = zeros(Float64,size(U))
 f_y    = zeros(Float64,size(U))
+rhop    = zeros(Float64,Np,K)
 epsN    = zeros(Float64,Np,K)
 sigma_x = zeros(Float64,size(U))
 sigma_y = zeros(Float64,size(U))
@@ -1425,10 +1429,10 @@ Kxy      = [zeros(MMatrix{Nc,Nc,Float64}) for _ in 1:NUM_THREADS]
 viscpen  = zeros(Float64,Nc,NUM_THREADS)
 blending = ones(Float64,K)
 
-prealloc = (f_x,f_y,theta_x,theta_y,sigma_x,sigma_y,VU,rholog,betalog,U_low,U_high,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr,L_plot,Kxx,Kyy,Kxy,UP,VUP,fP,sigmaP,viscpen,epsN,blending)
+prealloc = (f_x,f_y,theta_x,theta_y,sigma_x,sigma_y,VU,rholog,betalog,U_low,U_high,F_low,F_high,F_P,L,wspd_arr,λ_arr,λf_arr,dii_arr,L_plot,Kxx,Kyy,Kxy,UP,VUP,fP,sigmaP,viscpen,rhop,epsN,blending)
 ops      = (S0r_vec,S0s_vec,S0r_nnzi,S0r_nnzj,S0s_nnzi,S0s_nnzj,
             Sr_vec,Ss_vec,Sr_nnzi,Sr_nnzj,Ss_nnzi,Ss_nnzj,
-            Minv,Br_halved,Bs_halved,S_nnzi,S_nnzj,VDM)
+            Minv,Br_halved,Bs_halved,S_nnzi,S_nnzj,VDMinv)
 geom     = (mapP,Fmask,x,y,rxJ,syJ,J,sJ)
 
 function schlieren_visualization!(shcl,U,rhot,rhof,rhoP,rx,sy,Vf,LIFT,J,nxJ,nyJ)
