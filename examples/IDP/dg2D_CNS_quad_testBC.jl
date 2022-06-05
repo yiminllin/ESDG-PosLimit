@@ -291,8 +291,8 @@ const cv = 1/(γ-1)
 const kappa = mu*cp/Pr
 
 "Approximation parameters"
-const N = 3
-const K1D = 20
+const N = 2
+const K1D = 30
 const T = 1.0
 const CFL = 0.1
 const NUM_THREADS = Threads.nthreads()
@@ -302,10 +302,10 @@ const TOPLEFT     = 3*(N+1)
 
 "Mesh related variables"
 VX, VY, EToV = uniform_quad_mesh(2*K1D,K1D)
-# @. VX = VX*2
-# @. VY = VY
 @. VX = VX*2
-@. VY = 2*((VY+1)/2)^(2) - 1
+@. VY = VY
+# @. VX = VX*2
+# @. VY = 2*((VY+1)/2)^(2) - 1
 
 rd = init_reference_quad(N,gauss_lobatto_quad(0,0,N))
 "Initialize reference element"
@@ -769,6 +769,9 @@ function rhs_IDP!(U,rhsU,t,dtl,prealloc,ops,geom,in_s1)
             rhov = U[3,i,k]
             E    = U[4,i,k]
             p           = pfun(rho,rhou,rhov,E)
+            if (p < 0)
+                @show i,k
+            end
             v1,v2,v3,v4 = entropyvar(rho,rhou,rhov,E,p)
             f_x[1,i,k] = rhou
             f_x[2,i,k] = rhou^2/rho+p

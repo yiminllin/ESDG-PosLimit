@@ -309,7 +309,7 @@ const TOPLEFT     = 3*(N+1)
 
 const TN       = 0.5*10^(-1.8*(N+1)^0.25)
 const alphamin = 0.001
-const alphamax = 0.75
+const alphamax = 1.0
 const alphaE0  = 0.0001
 const s_factor = log((1-alphaE0)/alphaE0)
 

@@ -1562,7 +1562,7 @@ U_vtk    = zeros(Float64,Nc,Int(XLENGTH*(N+1)*K1D),(N+1)*K1D)
 blending_vtk = zeros(Float64,Int(XLENGTH*(N+1)*K1D),(N+1)*K1D)
 
 construct_vtk_mesh!(x_vtk,y_vtk)
-pvd = paraview_collection("$(OUTPUTPATH)/dg2D_euler_quad_dmr_LBOUNDTYPE=$(LBOUNDTYPE).pvd")
+pvd = paraview_collection("$(OUTPUTPATH)/dg2D_CNS_quad_dmr_LBOUNDTYPE=$(LBOUNDTYPE).pvd")
 
 xp   = Vp*x
 yp   = Vp*y
