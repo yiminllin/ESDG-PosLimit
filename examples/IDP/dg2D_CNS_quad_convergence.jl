@@ -321,8 +321,8 @@ const EL = pL/(γ-1)+0.5*rhoL*uL^2
 const ER = pR/(γ-1)+0.5*rhoR*uR^2
 
 "Approximation parameters"
-const N = 2
-const K1D = 80
+const N = parse(Int,ARGS[1])
+const K1D = parse(Int,ARGS[2])
 const T = 1.0
 const CFL = 0.75
 const NUM_THREADS = Threads.nthreads()
@@ -1320,9 +1320,8 @@ resW = zeros(size(U))
 # gr(aspect_ratio=:equal,legend=false,
 #    markerstrokewidth=0,markersize=2)
 # anim = Animation()
-
-xp   = Vp*x
-yp   = Vp*y
+# xp   = Vp*x
+# yp   = Vp*y
 
 dt_hist = []
 i = 1
@@ -1389,11 +1388,11 @@ u = U[2,:,:]./U[1,:,:]
 v = U[3,:,:]./U[1,:,:]
 E = U[4,:,:]
 
-xp   = Vp*x
-yp   = Vp*y
-rhop = Vp*rho
-scatter(xp,yp,rhop,zcolor=rhop,camera=(0,90))
-savefig("fig/dg2D_CNS_quad_convergence/N=$N,K1D=$K1D,T=$T,LIMITOPT=$LIMITOPT,POSDETECT=$POSDETECT,LBOUNDTYPE=$LBOUNDTYPE,BCFLUXTYPE=$BCFLUXTYPE,VISCPENTYPE=$VISCPENTYPE,Re=$Re.png")
+# xp   = Vp*x
+# yp   = Vp*y
+# rhop = Vp*rho
+# scatter(xp,yp,rhop,zcolor=rhop,camera=(0,90))
+# savefig("fig/dg2D_CNS_quad_convergence/N=$N,K1D=$K1D,T=$T,LIMITOPT=$LIMITOPT,POSDETECT=$POSDETECT,LBOUNDTYPE=$LBOUNDTYPE,BCFLUXTYPE=$BCFLUXTYPE,VISCPENTYPE=$VISCPENTYPE,Re=$Re.png")
 
 exact_U = @. exact_sol_viscous_shocktube.(x,y,T)
 exact_rho = [x[1] for x in exact_U]
@@ -1428,6 +1427,10 @@ println("L1 error is $L1err")
 println("L2 error is $L2err")
 println("Linf error is $Linferr")
 
+# df = DataFrame(N = Int64[], K = Int64[], T = Float64[], IS_SMOOTH = Bool[], CFL = Float64[], LIMITOPT = Int64[], POSDETECT = Int64[], LBOUNDTYPE = Float64[], L1err = Float64[], L2err = Float64[], Linferr = Float64[])
+df = load("dg2D_CNS_quad_convergence.jld2","convergence_data")
+push!(df,(N,K,T,ISSMOOTH,CFL,LIMITOPT,POSDETECT,LBOUNDTYPE,L1err,L2err,Linferr))
+save("dg2D_CNS_quad_convergence.jld2","convergence_data",df)
 
 
 end #muladd
