@@ -288,7 +288,7 @@ const POSTOL = 1e-13
 const WALLPT = 1.0/6.0
 const Nc = 4 # number of components
 "Approximation parameters"
-const N = 3     # N = 2,3,4
+const N = 1     # N = 2,3,4
 const K1D = 20  # K = 2,4,8,16,32
 const T = 0.5
 const dt0 = 1e+2
@@ -1232,12 +1232,9 @@ end
 
 exact_U = @. exact_sol_viscous_shocktube.(xq,yq,T)
 exact_rho = [x[1] for x in exact_U]
-exact_u = [x[2] for x in exact_U]
-exact_v = [x[3] for x in exact_U]
-exact_p = [x[4] for x in exact_U]
-exact_rhou = exact_rho .* exact_u
-exact_rhov = exact_rho .* exact_v
-exact_E = Efun.(exact_rho,exact_u,exact_v,exact_p)
+exact_rhou = [x[2] for x in exact_U]
+exact_rhov = [x[3] for x in exact_U]
+exact_E = [x[4] for x in exact_U]
 
 rho = U[1,:,:]
 rhou = U[2,:,:]
@@ -1251,17 +1248,17 @@ J = J[1,1]
 
 Linferr = maximum(abs.(exact_rho-rho))/maximum(abs.(exact_rho)) +
           maximum(abs.(exact_rhou-rhou))/maximum(abs.(exact_rhou)) +
-          maximum(abs.(exact_rhov-rhov))/maximum(abs.(exact_rhov)) +
+          maximum(abs.(exact_rhov-rhov)) +
           maximum(abs.(exact_E-E))/maximum(abs.(exact_E))
 
 L1err = sum(J*M.*abs.(exact_rho-rho))/sum(J*M.*abs.(exact_rho)) +
         sum(J*M.*abs.(exact_rhou-rhou))/sum(J*M.*abs.(exact_rhou)) +
-        sum(J*M.*abs.(exact_rhov-rhov))/sum(J*M.*abs.(exact_rhov)) +
+        sum(J*M.*abs.(exact_rhov-rhov)) +
         sum(J*M.*abs.(exact_E-E))/sum(J*M.*abs.(exact_E))
 
 L2err = sqrt(sum(J*M.*abs.(exact_rho-rho).^2))/sqrt(sum(J*M.*abs.(exact_rho).^2)) +
         sqrt(sum(J*M.*abs.(exact_rhou-rhou).^2))/sqrt(sum(J*M.*abs.(exact_rhou).^2)) +
-        sqrt(sum(J*M.*abs.(exact_rhov-rhov).^2))/sqrt(sum(J*M.*abs.(exact_rhov).^2)) +
+        sqrt(sum(J*M.*abs.(exact_rhov-rhov).^2)) +
         sqrt(sum(J*M.*abs.(exact_E-E).^2))/sqrt(sum(J*M.*abs.(exact_E).^2))
 
 println("N = $N, K = $K")
@@ -1270,17 +1267,17 @@ println("L2 error is $L2err")
 println("Linf error is $Linferr")
 
 # df = DataFrame(N = Int64[], K = Int64[], T = Float64[], IS_SMOOTH = Bool[], CFL = Float64[], LIMITOPT = Int64[], POSDETECT = Int64[], LBOUNDTYPE = Float64[], L1err = Float64[], L2err = Float64[], Linferr = Float64[])
-df = load("dg2D_CNS_tri_convergence.jld2","convergence_data")
-push!(df,(N,K,T,ISSMOOTH,CFL,LIMITOPT,POSDETECT,LBOUNDTYPE,L1err,L2err,Linferr))
-save("dg2D_CNS_tri_convergence.jld2","convergence_data",df)
+# df = load("dg2D_CNS_tri_convergence.jld2","convergence_data")
+# push!(df,(N,K,T,ISSMOOTH,CFL,LIMITOPT,POSDETECT,LBOUNDTYPE,L1err,L2err,Linferr))
+# save("dg2D_CNS_tri_convergence.jld2","convergence_data",df)
 
-# @unpack Vp = rd
-# gr(aspect_ratio=:equal,legend=false,
-#    markerstrokewidth=0,markersize=2)
+@unpack Vp = rd
+gr(aspect_ratio=:equal,legend=false,
+   markerstrokewidth=0,markersize=2)
 
-# vv = Vp*Pq*U[1,:,:]
+vv = Vp*Pq*U[1,:,:]
 
-# scatter(Vp*x,Vp*y,vv,zcolor=vv,camera=(0,90))
-# savefig("/home/yiminlin/Desktop/dg2D_CNS_tri_convergence.png")
+scatter(Vp*x,Vp*y,vv,zcolor=vv,camera=(0,90))
+savefig("/home/yiminlin/Desktop/dg2D_CNS_tri_convergence.png")
 
 end
