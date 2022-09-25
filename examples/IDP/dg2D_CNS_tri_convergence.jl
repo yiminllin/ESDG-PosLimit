@@ -849,8 +849,8 @@ function rhs_Limited!(U,rhsU,T,dt,prealloc,ops,geom,in_s1)
 
         for i = 1:Nfp
             iM = Fmask[i]
-            nij_x = abs(rxJ_k*Br[i,i]+sxJ_k*Bs[i,i])*.5 
-            nij_y = abs(ryJ_k*Br[i,i]+syJ_k*Bs[i,i])*.5
+            nij_x = (rxJ_k*Br[i,i]+sxJ_k*Bs[i,i])*.5 
+            nij_y = (ryJ_k*Br[i,i]+syJ_k*Bs[i,i])*.5
             nij_norm = sqrt(nij_x^2+nij_y^2)
 
             iP,kP = get_infoP(mapP,Fmask,i,k)
